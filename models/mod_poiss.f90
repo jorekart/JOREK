@@ -12,7 +12,7 @@ use phys_module, only: amix, amix_freeb, delta_psi_GS, newton_GS_freebnd, newton
                        n_limiter, treat_axis, fix_axis_nodes, &
                        use_mumps_eq, use_pastix_eq, use_strumpack_eq
 use equil_info,  only: ES
-use vacuum_equilibrium, only: vacuum_equil
+use vacuum_equilibrium, only: vacuum_equil, vacuum_pure_bc
 use mpi_mod
 use mod_interp
 use mod_basisfunctions
@@ -300,6 +300,10 @@ if (my_id == 0) then
     elseif (itype .eq. -2) then
   
       call element_matrix_GS_inverse(xpoint,xcase,Z_xpoint,psi_axis,psi_bnd,element,nodes,ivar_in,ivar_out,i_harm,ELM,RHS)
+    
+    elseif (itype .eq. -3) then
+
+        call element_matrix_GS_vac(element,nodes,ivar_out,i_harm,ELM,RHS)
   
     elseif (itype .eq. +2) then
   
@@ -457,6 +461,14 @@ end if ! my_id == 0
 if (freeboundary_equil .and. (itype .eq. -1)) then
   
   call vacuum_equil(my_id,node_list,bnd_node_list,bnd_elm_list,psi_axis,psi_bnd, a_mat, rhs_vec)
+
+
+elseif (itype .eq. -3) then
+  
+    call vacuum_pure_bc(my_id,node_list,bnd_node_list,bnd_elm_list, a_mat, rhs_vec)
+
+    ! --- put first dof to 0
+    a_mat%val(1) = zbig
 
 elseif (itype .eq. 4) then
 #if JOREK_MODEL == 180
@@ -744,6 +756,10 @@ if (my_id == 0) then
           node_list%node(i)%deltas(i_harm,k,ivar_out) = rhs_vec%val(index)
           node_list%node(i)%values(i_harm,k,ivar_out) = node_list%node(i)%values(i_harm,k,ivar_out) &
                                                       + (1.d0 - amix_used) * rhs_vec%val(index)
+        elseif (itype .eq. -3) then
+          node_list%node(i)%deltas(i_harm,k,ivar_out) = node_list%node(i)%values(i_harm,k,ivar_out) - rhs_vec%val(index)
+          node_list%node(i)%values(i_harm,k,ivar_out) = rhs_vec%val(index)
+
         !--------------- Variable projection
         elseif (itype .eq. 0) then
           if (ivar_out .eq. 710) then

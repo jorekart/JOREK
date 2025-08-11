@@ -337,6 +337,88 @@ module vacuum_equilibrium
   if ( my_id ==0 ) a_mat%nnz = ilarge   ! update the size of the matrix
     
   end subroutine vacuum_equil
+
+
+
+
+
+
+  !> Calculates the RHS contribution to calculate pure vacuum fields in the JOREK domain (no currents)
+  subroutine vacuum_pure_bc(my_id,node_list, bnd_node_list, bnd_elm_list, a_mat, rhs_vec)
+    
+    use mod_parameters
+    use data_structure
+    use gauss
+    use basis_at_gaussian
+    use vacuum_response
+    use constants
+    use mpi_mod
+    use mod_plasma_response, only: Greens_functions
+    
+    implicit none
+    
+    ! --- Routine parameters
+    integer,                      intent(in) :: my_id
+    type (type_node_list),        intent(in) :: node_list
+    type (type_bnd_node_list),    intent(in) :: bnd_node_list
+    type (type_bnd_element_list), intent(in) :: bnd_elm_list
+    type(type_SP_MATRIX) :: a_mat
+    type(type_RHS) :: rhs_vec    
+    
+    ! --- Local variables
+    type (type_bnd_element) :: bndelem_m
+    integer :: m_bndelem, l_vertex, l_dof, l_node, l_dir, l_node_bnd, l_index, ms
+    integer :: i_vertex, i_dof, i_node, i_dir, i_node_bnd, i_index, i_resp, i_resp_st
+    integer :: j_node_bnd, j_dof, j_node, j_dir, j_index, j_resp, ilarge, n_c
+    integer :: i, j, i_start_pf, i_end_pf, offset=1
+    real*8  :: size_l, dA, testfunc_l, size_i, basfunc_i
+    real*8  :: x(n_gauss), y(n_gauss), x_s(n_gauss), y_s(n_gauss), B_tan(n_gauss)
+    real*8  :: common_prefactor, psi_coil_j, B_tan_coil_i, B_tan_coil_i_loc, psi_0_j
+    real*8  :: G_BR, G_BZ, G_psi
+    integer :: ierr, step
+  
+    ! --- Go over boundary elements
+    do m_bndelem = 1, bnd_elm_list%n_bnd_elements
+      bndelem_m = bnd_elm_list%bnd_element(m_bndelem)
+      
+      ! --- Determine the values of R,s and Z,s at the Gaussian points.
+      call det_coord_bnd(bndelem_m, node_list, R=x, Z=y, R_S=x_s, Z_S=y_s)
+
+      do ms = 1, n_gauss
+        call Greens_functions(x(ms), y(ms), 10.d0, 0.d0, G_BR, G_BZ, G_psi)
+        B_tan(ms) = (G_BR*x_s(ms) + G_BZ*y_s(ms)) / (x_s(ms)**2.d0 + y_s(ms)**2.d0)**0.5d0
+      enddo
+
+      ! --- Select a test function (weak form equation must hold for every test function)
+      do l_vertex = 1, 2 ! (loop over nodes in element m_bndelem)
+        do l_dof = 1, 2 ! (loop over node dofs)
+          l_node     = bndelem_m%vertex(l_vertex)
+          l_dir      = bndelem_m%direction(l_vertex,l_dof)
+          l_node_bnd = bndelem_m%bnd_vertex(l_vertex)
+          l_index    = node_list%node(l_node)%index(l_dir)
+          size_l     = bndelem_m%size(l_vertex,l_dof)
+          
+          ! --- Integration in s-direction is carried out as Gauss quadrature,
+          !       int ds ... = sum_ms wgauss(ms) ...,
+          !     where wgauss(ms) denotes the Gaussian weights.
+          do ms = 1, n_gauss
+            testfunc_l = H1(l_vertex,l_dof,ms) * size_l
+            dA         = sqrt(x_s(ms)**2 + y_s(ms)**2) ! Integration factor from definition of dA
+            
+            common_prefactor = wgauss(ms) * dA * testfunc_l
+ 
+            rhs_vec%val(l_index) = rhs_vec%val(l_index) + common_prefactor * B_tan(ms)
+                
+          end do ! gauss point
+          
+        end do ! test function dof
+      end do ! test function vertex
+      
+    end do ! bnd elements
+       
+  end subroutine vacuum_pure_bc
+
+
   
   
   
