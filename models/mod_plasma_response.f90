@@ -1672,7 +1672,7 @@ module mod_plasma_response
       do u = 1, n_coil
         do w = 1, n_geom
 
-          vec_diff = geom(w,:) - coil(u,:)
+          vec_diff = geom(w,:) - coil(u,:) - 0.5*dl(u,:)
           norm_diff = sqrt(sum(vec_diff**2))
 
           if (norm_diff > 1.0e-10_dp) then

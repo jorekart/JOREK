@@ -415,6 +415,14 @@ module vacuum_equilibrium
 
     call B_harm(BZ_field, BR_field, geom, i_harm, phi_tor, gp_idx, BR_harm, BZ_harm)
 
+    max_BR = maxval(abs(BR_harm)); min_BR = minval(BR_harm)
+    max_BZ = maxval(abs(BZ_harm)); min_BZ = minval(BZ_harm)
+    print *,'max_BR_harm = ', max_BR
+    print *,'max_BZ_harm = ', max_BZ
+    print *,'min_BR_harm = ', min_BR
+    print *,'min_BZ_harm = ', min_BZ
+
+
     ! Test to substract 1/L*int(B_tan*dl)
     gp_idx = 0
     int_B_tan = 0
@@ -455,7 +463,7 @@ module vacuum_equilibrium
 
         gp_idx = gp_idx + 1
 
-        B_tan(ms) = (BR_harm(gp_idx)*x_s(ms) + BZ_harm(gp_idx)*y_s(ms)) / (x_s(ms)**2.d0 + y_s(ms)**2.d0)**0.5d0 - int_B_tan/L
+        B_tan(ms) = (BR_harm(gp_idx)*x_s(ms) + BZ_harm(gp_idx)*y_s(ms)) / (x_s(ms)**2.d0 + y_s(ms)**2.d0)**0.5d0
 
       end do
 
