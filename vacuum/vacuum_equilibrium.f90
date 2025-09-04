@@ -344,7 +344,7 @@ module vacuum_equilibrium
 
 
   !> Calculates the RHS contribution to calculate pure vacuum fields in the JOREK domain (no currents)
-  subroutine vacuum_pure_bc(my_id,node_list, bnd_node_list, bnd_elm_list, a_mat, rhs_vec)
+  subroutine vacuum_pure_bc(my_id,node_list, bnd_node_list, bnd_elm_list, a_mat, rhs_vec, i_harm)
     
     use mod_parameters
     use data_structure
@@ -353,12 +353,13 @@ module vacuum_equilibrium
     use vacuum_response
     use constants
     use mpi_mod
-    use mod_plasma_response, only: Greens_functions
+    use mod_plasma_response, only: tor_geometry, load_rmp_coils, biot_savart_matrix, B_harm
+    use phys_module, only: rmp_coils_simp
     
     implicit none
     
     ! --- Routine parameters
-    integer,                      intent(in) :: my_id
+    integer,                      intent(in) :: my_id, i_harm
     type (type_node_list),        intent(in) :: node_list
     type (type_bnd_node_list),    intent(in) :: bnd_node_list
     type (type_bnd_element_list), intent(in) :: bnd_elm_list
@@ -367,17 +368,58 @@ module vacuum_equilibrium
     
     ! --- Local variables
     type (type_bnd_element) :: bndelem_m
-    integer :: m_bndelem, l_vertex, l_dof, l_node, l_dir, l_node_bnd, l_index, ms
+    integer :: m_bndelem, l_vertex, l_dof, l_node, l_dir, l_node_bnd, l_index, ms, gp_idx, total_gauss_points
     integer :: i_vertex, i_dof, i_node, i_dir, i_node_bnd, i_index, i_resp, i_resp_st
     integer :: j_node_bnd, j_dof, j_node, j_dir, j_index, j_resp, ilarge, n_c
     integer :: i, j, i_start_pf, i_end_pf, offset=1
     real*8  :: size_l, dA, testfunc_l, size_i, basfunc_i
     real*8  :: x(n_gauss), y(n_gauss), x_s(n_gauss), y_s(n_gauss), B_tan(n_gauss)
     real*8  :: common_prefactor, psi_coil_j, B_tan_coil_i, B_tan_coil_i_loc, psi_0_j
-    real*8  :: G_BR, G_BZ, G_psi
-    integer :: ierr, step
-  
-    ! --- Go over boundary elements
+    real*8  :: G_BR, G_BZ, G_psi, max_BR, max_BZ, min_BR, min_BZ, int_B_tan, L
+    integer :: ierr, step, N_tor_r
+    real*8, allocatable :: geom(:,:), coil_tot(:,:), dl_tot(:,:)
+    real*8, allocatable :: phi_tor(:), i_tot(:), BZ_field(:), BR_field(:), BR_harm(:), BZ_harm(:), all_x(:), all_y(:)
+
+    N_tor_r = 50
+    gp_idx = 0
+
+    ! Calculate the total size needed for the arrays.
+    total_gauss_points = bnd_elm_list%n_bnd_elements * n_gauss
+
+    allocate(all_x(total_gauss_points))
+    allocate(all_y(total_gauss_points))
+
+    do m_bndelem = 1, bnd_elm_list%n_bnd_elements
+
+      bndelem_m = bnd_elm_list%bnd_element(m_bndelem)
+
+      call det_coord_bnd(bndelem_m, node_list, R=x, Z=y, R_S=x_s, Z_S=y_s)
+
+      do ms = 1, n_gauss
+
+        gp_idx = gp_idx + 1
+        all_x(gp_idx) = x(ms)
+        all_y(gp_idx) = y(ms)
+
+      end do
+
+    end do
+
+    call load_rmp_coils(coil_tot, dl_tot,i_tot)
+    call tor_geometry(geom, phi_tor, all_x, all_y, N_tor_r)
+    call biot_savart_matrix(coil_tot, geom, dl_tot, i_tot, BZ_field, BR_field)
+
+
+    allocate(BR_harm(gp_idx))
+    allocate(BZ_harm(gp_idx))
+
+    call B_harm(BZ_field, BR_field, geom, i_harm, phi_tor, gp_idx, BR_harm, BZ_harm)
+
+    ! Test to substract 1/L*int(B_tan*dl)
+    gp_idx = 0
+    int_B_tan = 0
+    L = 0
+
     do m_bndelem = 1, bnd_elm_list%n_bnd_elements
       bndelem_m = bnd_elm_list%bnd_element(m_bndelem)
       
@@ -385,9 +427,37 @@ module vacuum_equilibrium
       call det_coord_bnd(bndelem_m, node_list, R=x, Z=y, R_S=x_s, Z_S=y_s)
 
       do ms = 1, n_gauss
-        call Greens_functions(x(ms), y(ms), 10.d0, 0.d0, G_BR, G_BZ, G_psi)
-        B_tan(ms) = (G_BR*x_s(ms) + G_BZ*y_s(ms)) / (x_s(ms)**2.d0 + y_s(ms)**2.d0)**0.5d0
-      enddo
+
+        gp_idx = gp_idx + 1
+
+        int_B_tan = int_B_tan + BR_harm(gp_idx) * x_s(ms) * wgauss(ms) + BZ_harm(gp_idx) * y_s(ms) * wgauss(ms)
+        L = L + wgauss(ms)*(x_s(ms)**2.d0 + y_s(ms)**2.d0)**0.5d0
+
+      end do
+
+    end do
+
+    print *, 'int_B_tan = ', int_B_tan
+    print *, 'L = ', L
+
+
+    ! --- Go over boundary elements
+
+    gp_idx = 0
+
+    do m_bndelem = 1, bnd_elm_list%n_bnd_elements
+      bndelem_m = bnd_elm_list%bnd_element(m_bndelem)
+      
+      ! --- Determine the values of R,s and Z,s at the Gaussian points.
+      call det_coord_bnd(bndelem_m, node_list, R=x, Z=y, R_S=x_s, Z_S=y_s)
+
+      do ms = 1, n_gauss
+
+        gp_idx = gp_idx + 1
+
+        B_tan(ms) = (BR_harm(gp_idx)*x_s(ms) + BZ_harm(gp_idx)*y_s(ms)) / (x_s(ms)**2.d0 + y_s(ms)**2.d0)**0.5d0 - int_B_tan/L
+
+      end do
 
       ! --- Select a test function (weak form equation must hold for every test function)
       do l_vertex = 1, 2 ! (loop over nodes in element m_bndelem)
@@ -413,7 +483,7 @@ module vacuum_equilibrium
           
         end do ! test function dof
       end do ! test function vertex
-      
+
     end do ! bnd elements
        
   end subroutine vacuum_pure_bc

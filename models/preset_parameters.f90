@@ -708,7 +708,9 @@ subroutine preset_parameters
   RMP_har_sin = 3
   Number_RMP_harmonics = 1
   RMP_har_cos_spectrum(1) = RMP_har_cos ! 2 if only one harmonic (ntor=3) and this harmonic is RMP 
-  RMP_har_sin_spectrum(1) = RMP_har_sin ! 3 if only one harmonic (ntor=3) and this harmonic is RMP 
+  RMP_har_sin_spectrum(1) = RMP_har_sin ! 3 if only one harmonic (ntor=3) and this harmonic is RMP
+
+  rmp_coils_simp = ' '
 
 ! ===== Neoclassical parameters ======
   NEO = .false.

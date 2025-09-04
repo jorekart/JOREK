@@ -23,6 +23,7 @@ module mod_plasma_response
   public ::  t_pol_coil, t_coil, psi_coils
   public ::  read_coils, construct_test_coil, destruct_coils, log_coils, log_coil
   public ::  plasma_fields_at_xyz
+  public ::  tor_geometry, load_rmp_coils, biot_savart_matrix, B_harm
   
   ! --- Derived datatypes
   type :: t_pol_coil
@@ -1412,11 +1413,371 @@ module mod_plasma_response
       B(2)  = B(2)  -  G_Bz *  coil%pol_coil%weight(i_f) * mu_zero
 
     enddo
-      
+
+
   end subroutine B_coil_unit
 
+  !-------------------------------------------------------------------------------------
+  !> Takes a point and replicates it n_tor_r times 
+  !-------------------------------------------------------------------------------------
+
+  subroutine tor_geometry(geom, phi_tor, bound_r, bound_z, n_tor_r)
+    
+    implicit none
+    integer, parameter :: dp = kind(1.0d0)
+
+    ! Arguments
+    real(dp), intent(in) :: bound_r(:), bound_z(:)
+    integer, intent(in) :: n_tor_r
+    real(dp), allocatable, intent(out) :: geom(:,:), phi_tor(:)
+
+    ! Local variables
+    real(dp), allocatable :: x_geom(:), y_geom(:), z_geom(:), pol_r(:), pol_z(:)
+    integer :: i, l_pol, n_geom, idx_j, idx_init, idx_last
+
+    ! --- boundary points
+    l_pol = size(bound_r)
+    allocate(pol_r(l_pol), pol_z(l_pol))
+    pol_r = bound_r
+    pol_z = bound_z
+
+    ! phi coordinate of each replicated point
+    allocate(phi_tor(n_tor_r))
+    do i = 1, n_tor_r
+      phi_tor(i) = 2.0_dp * pi * real(i - 1, dp) / real(n_tor_r, dp)
+    end do
+
+    n_geom = l_pol * n_tor_r
+    allocate(x_geom(n_geom), y_geom(n_geom), z_geom(n_geom))
+
+    ! Convert to cartesian coordinates
+    do idx_j = 1, l_pol
+
+      idx_init = (idx_j - 1) * n_tor_r + 1
+      idx_last = idx_j * n_tor_r
+      x_geom(idx_init:idx_last) = pol_r(idx_j) * cos(phi_tor)
+      y_geom(idx_init:idx_last) = -pol_r(idx_j) * sin(phi_tor)
+      z_geom(idx_init:idx_last) = pol_z(idx_j)
+
+    end do
+
+    allocate(geom(n_geom, 3))
+    geom(:,1) = x_geom
+    geom(:,2) = y_geom
+    geom(:,3) = z_geom
+
+    ! Deallocate local arrays
+    deallocate(x_geom, y_geom, z_geom)
+
+  end subroutine tor_geometry
+
+  !-------------------------------------------------------------------------------------
+  !> Loads rmp coils geometry  
+  !-------------------------------------------------------------------------------------
+
+  subroutine load_rmp_coils(coil_tot, dl_tot,i_tot)
+    
+    use phys_module, only: rmp_coils_simp
+    
+    implicit none
+
+    integer, parameter :: dp = kind(1.0d0)
+    character(len=256), allocatable :: coil_files(:)
+    real(dp), allocatable :: coil_currents(:)
+    real(dp), allocatable, intent(out) :: coil_tot(:,:), dl_tot(:,:), i_tot(:)
+    character(len=256) :: line
+
+    ! Local variables
+    real(dp), allocatable :: coil(:,:), dl(:,:)
+    integer :: i, k, ios, n_seg, total_segments, current_row_start, n_rmp
+
+    ! Read the file with the information on the rmp you want to use and their current
+    n_rmp = 0
+    open(unit=40, file=trim(rmp_coils_simp)//'rmp_coils_setup.txt', &
+         status='old', action='read', iostat=ios)
+    if (ios /= 0) then
+        print *, 'Error opening rmp_coils_setup.txt'
+        stop
+    end if
+
+    do
+        read(40,'(A)',iostat=ios) line
+        if (ios /= 0) exit
+        if (len_trim(line) > 0 .and. line(1:1) /= "!") then
+            n_rmp = n_rmp + 1
+        end if
+    end do
+    close(40)
+
+    ! Allocate arrays
+    allocate(coil_files(n_rmp))
+    allocate(coil_currents(n_rmp))
+
+    ! read filenames and currents
+    open(unit=50, file=trim(rmp_coils_simp)//'rmp_coils_setup.txt', &
+         status='old', action='read', iostat=ios)
+    if (ios /= 0) then
+        print *, 'Error reopening rmp_coils_setup.txt'
+        stop
+    end if
+
+    i = 0
+    do
+        read(50,'(A)',iostat=ios) line
+        if (ios /= 0) exit
+        if (len_trim(line) == 0 .or. line(1:1) == "!") cycle  ! skip blanks & comments
+        i = i + 1
+        read(line,*) coil_files(i), coil_currents(i)
+        coil_files(i) = trim(rmp_coils_simp)//trim(coil_files(i))
+    end do
+    close(50)
+
+    ! Check results
+    print *, 'Number of coils read: ', n_rmp
+    do i = 1, n_rmp
+        print '(I3,2X,A,2X,F8.3)', i, trim(coil_files(i)), coil_currents(i)
+    end do
+
+    !  Pass 1: Determine the total size needed for the arrays
+
+    total_segments = 0
+    do i = 1, size(coil_files)
+
+        open(unit=20, file=coil_files(i), status='old', action='read', iostat=ios)
+        if (ios /= 0) cycle ! Skip if file can't be opened
+
+        n_seg = 0
+        do
+            read(20, *, iostat=ios)
+            if (ios /= 0) exit
+            n_seg = n_seg + 1
+        end do
+        close(20)
+
+        total_segments = total_segments + n_seg
+
+    end do
+    print *, 'total_Segments = ', total_segments
+
+    !  Allocate the final arrays with the correct size
+
+    if (total_segments == 0) then
+
+        print *, "Warning: No coil data found or files could not be read."
+        ! Allocate zero-sized arrays to satisfy intent(out)
+        allocate(coil_tot(0, 3), dl_tot(0, 3), i_tot(0))
+        return
+
+    end if
+
+    allocate(coil_tot(total_segments, 3))
+    allocate(dl_tot(total_segments, 3))
+    allocate(i_tot(total_segments))
 
 
+    !  Pass 2: Read the data and fill the pre-allocated arrays
 
+    current_row_start = 1
+    do i = 1, size(coil_files)
+
+        open(unit=20, file=coil_files(i), status='old', action='read', iostat=ios)
+        if (ios /= 0) cycle
+
+        ! Determine this file's segment count
+        n_seg = 0
+        do
+            read(20, *, iostat=ios)
+            if (ios /= 0) exit
+            n_seg = n_seg + 1
+        end do
+        rewind(20)
+
+        ! Read data into a temporary array for the current file
+        allocate(coil(n_seg, 3))
+        do k = 1, n_seg
+            read(20, *) coil(k, :)
+        end do
+        close(20)
+
+        dl = diff_seg(coil)
+
+        coil_tot(current_row_start : current_row_start + n_seg - 1, :) = coil
+        dl_tot(current_row_start : current_row_start + n_seg - 1, :) = dl
+        i_tot(current_row_start : current_row_start + n_seg - 1) = coil_currents(i)
+
+        current_row_start = current_row_start + n_seg
+
+        deallocate(coil, dl)
+
+    end do
+
+    contains
+
+        function diff_seg(coil) result(dl)
+          
+          ! Given the points of a coil, it calculates the dl vector bewteen each point
+
+            real(dp), intent(in) :: coil(:,:)
+            real(dp), allocatable :: dl(:,:)
+            integer :: n
+            n = size(coil, 1)
+            allocate(dl(n, 3))
+
+            if (n > 0) then
+                dl(1:n-1,:) = coil(2:n,:) - coil(1:n-1,:)
+                dl(n,:) = coil(1,:) - coil(n,:)
+            end if
+
+        end function diff_seg
+
+  end subroutine load_rmp_coils
+
+  !-------------------------------------------------------------------------------------
+  !> Calculates BR and BZ fields created by a coil at an arbitrary point  
+  !-------------------------------------------------------------------------------------
+  
+  subroutine biot_savart_matrix(coil, geom, dl, i_tot, BZ_field, BR_field)
+
+    use phys_module, only: rmp_coils_simp
+    implicit none
+
+    integer, parameter :: dp = kind(1.0d0)
+    real(dp), parameter :: mu0 = 4.0_dp * pi * 1.0e-7_dp
+    real(dp), intent(in) :: coil(:,:), geom(:,:), dl(:,:), i_tot(:)
+    real(dp), allocatable, intent(out) :: BZ_field(:), BR_field(:)
+    real(dp), allocatable :: mat_mz(:,:), mat_mr(:,:)
+    integer :: n_coil, n_geom, u, w
+    real(dp) :: vec_diff(3), vec_cross(3), norm_diff
+    real(dp) :: field_tot(3), r_pol
+    real(dp) :: R_hat(2)
+    integer, parameter :: turns = 4 ! Turns per coil. 4 for rmp
+    character(len=256) :: filename
+    logical :: file_exists
+    integer :: ios
+
+    n_coil = size(coil, 1)
+    n_geom = size(geom, 1)
+    allocate(mat_mz(n_geom, n_coil))
+    allocate(mat_mr(n_geom, n_coil))
+    mat_mz = 0.0_dp
+    mat_mr = 0.0_dp
+
+    filename = trim(rmp_coils_simp)//trim('matrix_data.bin')
+
+    ! Check if file exists
+    inquire(file=filename, exist=file_exists)
+
+    if (.not. file_exists) then
+
+      do u = 1, n_coil
+        do w = 1, n_geom
+
+          vec_diff = geom(w,:) - coil(u,:)
+          norm_diff = sqrt(sum(vec_diff**2))
+
+          if (norm_diff > 1.0e-10_dp) then
+
+            vec_cross(1) = dl(u,2) * vec_diff(3) - dl(u,3) * vec_diff(2)
+            vec_cross(2) = dl(u,3) * vec_diff(1) - dl(u,1) * vec_diff(3)
+            vec_cross(3) = dl(u,1) * vec_diff(2) - dl(u,2) * vec_diff(1)
+            field_tot = (mu0 / (4.0_dp * pi)) * vec_cross / (norm_diff**3)
+            mat_mz(w, u) = field_tot(3)
+
+            r_pol = sqrt(geom(w,1)**2 + geom(w,2)**2)
+            R_hat = [geom(w,1)/r_pol, geom(w,2)/r_pol]
+            mat_mr(w, u) = field_tot(1)*R_hat(1) + field_tot(2)*R_hat(2)
+
+          else
+            print *, 'norm_diff<1e-10'
+          end if
+
+        end do
+      end do
+
+      ! Save matrix to file
+      open(unit=30, file=filename, form='unformatted', status='replace')
+      write(30) mat_mz, mat_mr
+      close(30)
+
+    else
+
+      ! Load matrix from file
+      print *, 'Loading matrix from the file'
+      open(unit=30, file=filename, form='unformatted', status='old')
+      read(30, iostat=ios) mat_mz, mat_mr
+
+      if (ios /= 0) then
+        print *, 'Error loading precalculated matrix. Check dimensions.'
+        close(30)
+        stop 1
+      end if 
+
+      close(30)
+
+    end if
+
+    allocate(BZ_field(n_geom))
+    allocate(BR_field(n_geom))
+
+    BZ_field = turns * matmul(mat_mz, i_tot)
+    BR_field = turns * matmul(mat_mr, i_tot)
+
+  end subroutine biot_savart_matrix
+
+  !-------------------------------------------------------------------------------------
+  !> Calculates i-th harmonic component of the B-field
+  !-------------------------------------------------------------------------------------
    
+  subroutine B_harm(BZ_field, BR_field, geom, i_harm, phi_tor, l_pol, BR_harm, BZ_harm)
+
+    implicit none
+
+    integer, parameter :: dp = kind(1.0d0)
+    real(dp), intent(in) :: BZ_field(:), BR_field(:), geom(:,:)
+    integer, intent(in) :: i_harm, l_pol
+    real(dp), intent(in) ::  phi_tor(:)
+    real(dp), allocatable :: harm_factor(:)
+    real(dp), intent(out) :: BZ_harm(:), BR_harm(:)
+    real(dp) :: delta_phi
+    integer :: n_tor_r, idx_j, idx_init, idx_last
+    integer :: n_geom
+
+    n_geom = size(geom, 1)
+    n_tor_r = size(phi_tor)
+
+    allocate(harm_factor(n_tor_r))
+    delta_phi = phi_tor(2) - phi_tor(1)
+
+    if (i_harm == 1) then
+
+        harm_factor = (1.0_dp/(2.0_dp*pi)) * delta_phi
+
+    else if (mod(i_harm, 2) == 0) then
+
+        harm_factor = (1.0_dp/pi) * cos(real(i_harm,dp)/2.0_dp * phi_tor) * delta_phi
+
+    else
+
+        harm_factor = (1.0_dp/pi) * sin(floor(real(i_harm,dp)/2.0_dp) * phi_tor) * delta_phi
+
+    end if
+
+    BZ_harm = 0.0_dp
+    BR_harm = 0.0_dp
+
+    do idx_j = 1, l_pol
+
+        idx_init = (idx_j-1)*n_tor_r + 1
+        idx_last = idx_j*n_tor_r
+
+        BZ_harm(idx_j) = dot_product(harm_factor, BZ_field(idx_init:idx_last))
+        BR_harm(idx_j) = dot_product(harm_factor, BR_field(idx_init:idx_last))
+
+    end do
+
+    deallocate(harm_factor)
+
+  end subroutine B_harm
+
+
 end module mod_plasma_response

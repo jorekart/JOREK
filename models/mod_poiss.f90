@@ -90,7 +90,7 @@ integer                          :: inode_father, Index_elm, i_father
 integer, dimension(n_vertex_max) :: pr
 integer, dimension(2)            :: parent
 integer, dimension(n_vertex_max) :: node_out
-integer:: nnz, ierr
+integer:: nnz, ierr, j_node, node_idx
 integer*8 :: check_data
 character*8 :: type
 integer :: node_indices( (n_order+1)/2, (n_order+1)/2 )
@@ -377,7 +377,9 @@ if (my_id == 0) then
             a_mat%jcn(ilarge) = index_large_k
             a_mat%val(ilarge) = ELM(index_ij,index_kl)
 	    !$omp end critical
- 
+
+
+
 #if STELLARATOR_MODEL
           enddo ! k_tor
 #endif 
@@ -465,10 +467,27 @@ if (freeboundary_equil .and. (itype .eq. -1)) then
 
 elseif (itype .eq. -3) then
   
-    call vacuum_pure_bc(my_id,node_list,bnd_node_list,bnd_elm_list, a_mat, rhs_vec)
+    call vacuum_pure_bc(my_id,node_list,bnd_node_list,bnd_elm_list, a_mat, rhs_vec, i_harm)
 
     ! --- put first dof to 0
+    ! j_node = bnd_node_list%bnd_node(50)%index_jorek
+    ! print *,'j_node = ', j_node
+
+    ! index_large_k = node_list%node(j_node)%index(1)
+    ! print *,'index_large_k = ', index_large_k
+      
+    ! do ilarge = 1, n_vertex_max**2 * n_degrees**2
+        
+    !   if (a_mat%jcn(ilarge)== index_large_k  .and. a_mat%irn(ilarge)== index_large_k) then
+    !     node_idx = ilarge
+    !     exit
+    !   end if
+
+    ! end do
+
+    ! a_mat%val(node_idx) = zbig
     a_mat%val(1) = zbig
+    !rhs_vec%val(index_large_k) = imposed_val * zbig
 
 elseif (itype .eq. 4) then
 #if JOREK_MODEL == 180
