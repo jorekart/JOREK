@@ -75,11 +75,13 @@ program overlap_vac_fields
   call boundary_from_grid(node_list, element_list, bnd_node_list, bnd_elm_list, .false.)
 
   ! Solve Poisson equation with boundary conditions
-  i_harm = 2
+  do i_harm = 2,11
 
-  ! pure vac fields (no plasma current) use type option -3
-  call poisson(my_id,-3,node_list,element_list,bnd_node_list,bnd_elm_list,var_psi,var_psi,i_harm, &
-               0.d0,1.d0,.false.,1,-2.d0,.false.,.false.,1) ! These last parameters play no role here...   
+    ! pure vac fields (no plasma current) use type option -3
+    call poisson(my_id,-3,node_list,element_list,bnd_node_list,bnd_elm_list,var_psi,var_psi,i_harm, &
+                0.d0,1.d0,.false.,1,-2.d0,.false.,.false.,1) ! These last parameters play no role here...   
+
+  end do
 
   ! Export restart
   call export_restart(node_list, element_list, 'test')
