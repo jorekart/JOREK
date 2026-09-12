@@ -36,6 +36,20 @@ module mod_jorek2IMAS
     real*8  :: Z_max =  6.d0   ! Maximum Z
   end type t_rect_grid_params
 
+
+  ! Strucure for PFC thin wall grid, discretized with triangles
+  type :: t_PFC_triang_grid
+    integer :: n_nodes
+    integer :: n_triangles
+    integer :: n_pol
+    integer :: n_phi
+    real*8, allocatable  :: tria_xyz(:,:)
+    integer, allocatable :: tria_connectivity(:,:)
+  end type t_PFC_triang_grid
+
+  type(t_expr_list), save :: expr_list_bnd
+
+  
   ! *******************************************************************************************************
   ! *************** Data structures needed to read geometry of the STARWALL coils *************************
   ! *******************************************************************************************************
@@ -279,7 +293,7 @@ module mod_jorek2IMAS
 
 
   ! --- Fill a wall IDS from STARWALL data, needs to be adapted to CARIDDI!
-  subroutine fill_wall_IDS(first_step, time_SI, wall_thickness, wall_ids)  
+  subroutine fill_wall_IDS(first_step, time_SI, wall_thickness, wall_ids, res_bnd, PFC_triang_grid)  
 
     use phys_module, only : F0, central_density, sqrt_mu0_rho0, &
                            sqrt_mu0_over_rho0, central_mass, imp_type, &
@@ -294,6 +308,8 @@ module mod_jorek2IMAS
     real*8,                  intent(in)    :: time_SI
     real*8,                  intent(in)    :: wall_thickness  !< effective thin wall thickness
     type(ids_wall),  target, intent(inout) :: wall_ids
+    real*8,                  intent(in)    :: res_bnd(:,:,:)   !< data for PFC grid
+    type(t_PFC_triang_grid), intent(in)    :: PFC_triang_grid  !< grid for PFC wall, discretized with triangles
    
     ! --- Local parameters 
     integer    :: i, j, k, m, var_rad, i_var, i_tor, index, index_node, my_id=0, ierr, i_tri
@@ -303,9 +319,6 @@ module mod_jorek2IMAS
     real*8     :: phi1, phi2, phi3, r1(3), r2(3), r3(3), r21(3), r32(3), r13(3), r21_cross_r32(3)
     real*8     :: j_lin(3), r_mid(3), Iw_net_tor
     real*8, allocatable :: tripot_w(:)
-    real*8, allocatable :: result(:,:,:)
-    character(10)       :: str
-    type(type_command)  :: command_tmp
     
     ! **********************************************************************************
     ! ******************************* IMAS **********************************************
@@ -353,58 +366,7 @@ module mod_jorek2IMAS
       grid => wall_ids%description_ggd(i_vv)%grid_ggd(grid_ind)
       grid%time = time_SI
       
-      grid%identifier%index = 0   ! Unspecified
-      allocate( grid%identifier%description(1))
-      allocate( grid%identifier%name(1))
-      grid%identifier%description = "Thin wall described with linear triangles"
-      grid%identifier%name        = "Thin triangular wall"
-
-      allocate(grid%space(1))
-
-      ! --- Identifier
-      allocate( grid%space(1)%identifier%description(1))
-      allocate( grid%space(1)%identifier%name(1))
-      grid%space(1)%identifier%index       = 1  ! Primary space
-      grid%space(1)%identifier%description = "This is just a 3D cartesian space"
-      grid%space(1)%identifier%name        = "Primary space"
-
-      grid%space(1)%geometry_type%index = 0  ! Standard (not Fourier)
-      allocate(grid%space(1)%coordinates_type(3))
-
-      ! --- Identifiers for (x,y,z) type coordinates (1,2,3)
-      grid%space(1)%coordinates_type(1)%index = 1
-      grid%space(1)%coordinates_type(2)%index = 2
-      grid%space(1)%coordinates_type(3)%index = 3
-
-      allocate(grid%space(1)%objects_per_dimension(3))
-
-      ! --- Save wall grid nodes
-      n_wall_nodes = sr%npot_w
-      allocate(grid%space(1)%objects_per_dimension(1)%object(n_wall_nodes))
-      grid%space(1)%objects_per_dimension(1)%geometry_content%index = 1  ! node coordinates
-      do i=1, n_wall_nodes
-        allocate( grid%space(1)%objects_per_dimension(1)%object(i)%geometry(3) ) ! Allocate dimensions for each node
-        grid%space(1)%objects_per_dimension(1)%object(i)%geometry(:) = sr%xyzpot_w(i,:)
-      enddo
-
-      ! --- Save thin wall triangles 
-      allocate(grid%space(1)%objects_per_dimension(3)%object(n_wall_triangles))  ! Index 3 for 2D objects (faces)
-      do i=1, n_wall_triangles
-        allocate( grid%space(1)%objects_per_dimension(3)%object(i)%nodes(3) ) ! 3 nodes per triangle
-        grid%space(1)%objects_per_dimension(3)%object(i)%nodes(:) = sr%jpot_w(i,:)  ! The node indices of this triangle
-      enddo
-
-      ! --- Create a grid subset where the wall triangles are the elements of the subset
-      ! --- 1 current density value will be assigned per triangle 
-      allocate(grid%grid_subset(1))
-      grid%grid_subset(1)%identifier%index = 5  ! Identifier index for 2D cells in the dictionary
-      allocate(grid%grid_subset(1)%identifier%name(1))
-      allocate(grid%grid_subset(1)%identifier%description(1))
-      grid%grid_subset(1)%identifier%name = "2D triangles"
-      grid%grid_subset(1)%identifier%description = "2D cells representing the linear thin triangles"
-
-
-      grid%grid_subset(1)%dimension        = 3  ! Index 3 means 2 dimensions in the dictionary
+      call triang_thin_wall_2ggd( grid, sr%xyzpot_w, sr%jpot_w, subset_choice="triangles")
 
       ! --- Save wall thickness
       allocate(wall_ids%description_ggd(i_vv)%thickness(n_grid))
@@ -501,28 +463,6 @@ module mod_jorek2IMAS
     ! *******************************************************************************
     ! ************* Export FW and divertor fluxes and currents **********************
     ! *******************************************************************************
-    ! --- Call expressions to compute boundary quantities
-    step_imported = .true.
-
-    ! --- Arguments for boundary quantities
-    command_tmp%n_args = 3
-    command_tmp%args(1) = '0'              ! phimin
-    command_tmp%args(2) = '6.28318530718'  ! phimax
-    n_phi = max(32, n_tor* 3)
-    write(str, '(I0)') n_phi
-    command_tmp%args(3) = str  
-    call clean_up()
-    expr_list = exprs((/'x', 'y', 'z', 'Psi', 'A_R', 'A_Z', &
-                        'BR', 'BZ', 'Btor', 'JR', 'JZ', 'Jtor',  &
-                        'heatF_total', 'partF_total', 'npartF_total'/), 15)
-    
-    call boundary_quantities(command_tmp, first_step==.true., ierr, result)
-    call clean_up()
-
-    n_pol = size(result, 2)
-    n_wall_triangles = 2 * n_phi * n_pol 
-    n_wall_nodes     = n_phi * n_pol 
-
     ! --- Export grid boundary geometry as thin triangles (FW + divertor)
     if (first_step) then
 
@@ -534,81 +474,7 @@ module mod_jorek2IMAS
       grid => wall_ids%description_ggd(i_fw)%grid_ggd(grid_ind)
       grid%time = time_SI
       
-      grid%identifier%index = 0   ! Unspecified
-      allocate( grid%identifier%description(1))
-      allocate( grid%identifier%name(1))
-      grid%identifier%description = "Thin wall described with linear triangles"
-      grid%identifier%name = "Thin triangular wall"
-
-      ! --- Space identifier
-      allocate( grid%space(1))
-      allocate( grid%space(1)%identifier%description(1))
-      allocate( grid%space(1)%identifier%name(1))
-      grid%space(1)%identifier%index       = 1  ! Primary space
-      grid%space(1)%identifier%description = "This is just a 3D cartesian space"
-      grid%space(1)%identifier%name        = "Primary space"
-
-      grid%space(1)%geometry_type%index = 0  ! Standard (not Fourier)
-      allocate(grid%space(1)%coordinates_type(3))
-
-      ! --- Identifiers for (x,y,z) type coordinates (1,2,3)
-      grid%space(1)%coordinates_type(1)%index = 1
-      grid%space(1)%coordinates_type(2)%index = 2
-      grid%space(1)%coordinates_type(3)%index = 3
-
-      allocate(grid%space(1)%objects_per_dimension(3))
-
-      ! --- Create and export grid nodes and triangles
-      allocate(grid%space(1)%objects_per_dimension(1)%object(n_wall_nodes))
-      allocate(grid%space(1)%objects_per_dimension(3)%object(n_wall_triangles))  ! Index 3 for 2D objects (faces)
-      grid%space(1)%objects_per_dimension(1)%geometry_content%index = 1  ! node coordinates
-      
-      i_tri = 0
-      do i_phi=1, n_phi
-        do i_pol=1, n_pol
-          
-          i = i_pol + (i_phi-1)*n_pol  !< Global index of refence node
-
-          ! --- Get global indices of the 4 nodes forming a quadrilateral, and make two triangles out of it
-          ipol1 = i_pol;                  itor1 = i_phi;
-          ipol2 = mod(i_pol,n_pol) + 1;   itor2 = i_phi;
-          ipol3 = mod(i_pol,n_pol) + 1;   itor3 = mod(i_phi,n_phi) + 1;
-          ipol4 = i_pol;                  itor4 = mod(i_phi,n_phi) + 1;
-
-          i1 = ipol1 + (itor1-1)*n_pol
-          i2 = ipol2 + (itor2-1)*n_pol
-          i3 = ipol3 + (itor3-1)*n_pol
-          i4 = ipol4 + (itor4-1)*n_pol
-          
-          ! --- Fill in reference node coordinates
-          r1(:) = (/ result(itor1,ipol1,1), result(itor1,ipol1,2), result(itor1,ipol1,3) /) ! x, y, z coordinates
-          allocate( grid%space(1)%objects_per_dimension(1)%object(i)%geometry(3) ) ! Allocate dimensions for each node
-          grid%space(1)%objects_per_dimension(1)%object(i)%geometry(:) =  r1
-
-          ! --- Fill in two triangles
-          ! --- Triangle 1
-          i_tri = i_tri + 1
-          allocate( grid%space(1)%objects_per_dimension(3)%object(i_tri)%nodes(3) ) ! 3 nodes per triangle
-          grid%space(1)%objects_per_dimension(3)%object(i_tri)%nodes(:) = (/ i1, i2, i3/)  ! The node indices of this triangle
-
-          ! --- Triangle 2
-          i_tri = i_tri + 1
-          allocate( grid%space(1)%objects_per_dimension(3)%object(i_tri)%nodes(3) ) ! 3 nodes per triangle
-          grid%space(1)%objects_per_dimension(3)%object(i_tri)%nodes(:) = (/i1, i3, i4 /)  ! The node indices of this triangle
-
-        enddo
-      enddo
-
-      ! --- Create a grid subset where the wall nodes elements of the subset
-      ! --- values will be assigned to the nodes
-      allocate(grid%grid_subset(1))
-      allocate(grid%grid_subset(1)%identifier%name(1))
-      allocate(grid%grid_subset(1)%identifier%description(1))
-      grid%grid_subset(1)%identifier%index = 1  ! Identifier index for 0D nodes in the dictionary
-      grid%grid_subset(1)%identifier%name  = "0D nodes"
-      grid%grid_subset(1)%identifier%description = "Triangle nodes of the grid"
-
-      grid%grid_subset(1)%dimension        = 1  ! Index 1 means 0 dimensions in the dictionary (for 0D nodes)
+      call triang_thin_wall_2ggd( grid, PFC_triang_grid%tria_xyz, PFC_triang_grid%tria_connectivity, subset_choice="nodes")
 
       !--- Information about the wall component
       allocate(wall_ids%description_ggd(i_fw)%component(n_grid))
@@ -642,10 +508,14 @@ module mod_jorek2IMAS
     wall_ids%description_ggd(i_fw)%ggd(i_slice)%j_total(1)%grid_index        = 1
     wall_ids%description_ggd(i_fw)%ggd(i_slice)%j_total(1)%grid_subset_index = 1
 
-    do i_exp=1, expr_list%n_expr
+    n_pol = PFC_triang_grid%n_pol
+    n_phi = PFC_triang_grid%n_phi
+    n_wall_nodes = PFC_triang_grid%n_nodes
+
+    do i_exp=1, expr_list_bnd%n_expr
       
       ! --- Total heatflux
-      if (expr_list%expr(i_exp)%name=='heatF_total') then
+      if (expr_list_bnd%expr(i_exp)%name=='heatF_total') then
         allocate( wall_ids%description_ggd(i_fw)%ggd(i_slice)%power_density(n_grid_sub) )
         allocate( wall_ids%description_ggd(i_fw)%ggd(i_slice)%power_density(1)%values(n_wall_nodes) ) ! --- one value per node
 
@@ -655,13 +525,13 @@ module mod_jorek2IMAS
         do i_phi=1, n_phi
           do i_pol=1, n_pol 
             i = i_pol + (i_phi-1)*n_pol  !< Global index of refence node
-            wall_ids%description_ggd(i_fw)%ggd(i_slice)%power_density(1)%values(i) = result(i_phi,i_pol,i_exp)
+            wall_ids%description_ggd(i_fw)%ggd(i_slice)%power_density(1)%values(i) = res_bnd(i_phi,i_pol,i_exp)
           enddo
         enddo
       endif
 
       ! --- Psi
-      if (expr_list%expr(i_exp)%name=='Psi') then
+      if (expr_list_bnd%expr(i_exp)%name=='Psi') then
         allocate( wall_ids%description_ggd(i_fw)%ggd(i_slice)%psi(n_grid_sub) )
         allocate( wall_ids%description_ggd(i_fw)%ggd(i_slice)%psi(1)%values(n_wall_nodes) ) ! --- one value per node
 
@@ -671,52 +541,144 @@ module mod_jorek2IMAS
         do i_phi=1, n_phi
           do i_pol=1, n_pol 
             i = i_pol + (i_phi-1)*n_pol  !< Global index of refence node
-            wall_ids%description_ggd(i_fw)%ggd(i_slice)%psi(1)%values(i) = result(i_phi,i_pol,i_exp)
+            wall_ids%description_ggd(i_fw)%ggd(i_slice)%psi(1)%values(i) = res_bnd(i_phi,i_pol,i_exp)
           enddo
         enddo
       endif
 
       ! --- J_phi
-      if (expr_list%expr(i_exp)%name=='Jtor') then
+      if (expr_list_bnd%expr(i_exp)%name=='Jtor') then
         allocate( wall_ids%description_ggd(i_fw)%ggd(i_slice)%j_total(1)%phi(n_wall_nodes) ) ! --- one value per node
 
         do i_phi=1, n_phi
           do i_pol=1, n_pol 
             i = i_pol + (i_phi-1)*n_pol  !< Global index of refence node
-            wall_ids%description_ggd(i_fw)%ggd(i_slice)%j_total(1)%phi(i) = result(i_phi,i_pol,i_exp) * fact_Ip
+            wall_ids%description_ggd(i_fw)%ggd(i_slice)%j_total(1)%phi(i) = res_bnd(i_phi,i_pol,i_exp) * fact_Ip
           enddo
         enddo
       endif
 
       ! --- J_R
-      if (expr_list%expr(i_exp)%name=='JR') then
+      if (expr_list_bnd%expr(i_exp)%name=='JR') then
         allocate( wall_ids%description_ggd(i_fw)%ggd(i_slice)%j_total(1)%r(n_wall_nodes) ) ! --- one value per node
 
         do i_phi=1, n_phi
           do i_pol=1, n_pol 
             i = i_pol + (i_phi-1)*n_pol  !< Global index of refence node
-            wall_ids%description_ggd(i_fw)%ggd(i_slice)%j_total(1)%r(i) = result(i_phi,i_pol,i_exp) 
+            wall_ids%description_ggd(i_fw)%ggd(i_slice)%j_total(1)%r(i) = res_bnd(i_phi,i_pol,i_exp) 
           enddo
         enddo
       endif
 
       ! --- J_Z
-      if (expr_list%expr(i_exp)%name=='JZ') then
+      if (expr_list_bnd%expr(i_exp)%name=='JZ') then
         allocate( wall_ids%description_ggd(i_fw)%ggd(i_slice)%j_total(1)%z(n_wall_nodes) ) ! --- one value per node
 
         do i_phi=1, n_phi
           do i_pol=1, n_pol 
             i = i_pol + (i_phi-1)*n_pol  !< Global index of refence node
-            wall_ids%description_ggd(i_fw)%ggd(i_slice)%j_total(1)%z(i) = result(i_phi,i_pol,i_exp) 
+            wall_ids%description_ggd(i_fw)%ggd(i_slice)%j_total(1)%z(i) = res_bnd(i_phi,i_pol,i_exp) 
           enddo
         enddo
       endif
-
     
     enddo
     ! *******************************************************************************
   
   end subroutine fill_wall_IDS
+ 
+
+
+
+
+  
+
+
+  ! --- Fill a wall IDS from STARWALL data, needs to be adapted to CARIDDI!
+  subroutine fill_transport_IDS(first_step, time_SI, transport_ids, res_bnd, PFC_triang_grid)  
+
+    implicit none
+
+    ! --- External parameters
+    logical,                 intent(in)    :: first_step      ! is this the first step?
+    real*8,                  intent(in)    :: time_SI
+    real*8,                  intent(in)    :: res_bnd(:,:,:)   !< data for PFC grid
+    type(t_PFC_triang_grid), intent(in)    :: PFC_triang_grid  !< grid for PFC wall, discretized with triangles
+    type(ids_plasma_transport),  target, intent(inout) :: transport_ids
+   
+    ! --- Local parameters 
+    integer    :: i, j, k, m, i_tor, index, index_node, my_id=0, ierr, i_tri
+    integer    :: i_phi, i_pol, n_phi, n_pol, n_wall_nodes
+    integer    :: i_exp
+
+    ! **********************************************************************************
+    ! ******************************* IMAS **********************************************
+    ! **********************************************************************************
+    type(ids_generic_grid_scalar),      pointer :: ggd_scalar
+    type(ids_generic_grid_aos3_root),   pointer :: grid
+    
+    integer :: n_slice, i_slice, grid_ind, grid_sub_ind, n_grid_sub, n_grid, i_model
+    ! **********************************************************************************
+  
+    ! --- Number of grids and grid subsets
+    n_grid       = 1
+    n_grid_sub   = 1
+    grid_ind     = 1  ! Index
+    grid_sub_ind = 1  ! Index    
+    i_model      = 1
+
+    transport_ids%ids_properties%homogeneous_time = IDS_TIME_MODE_HETEROGENEOUS
+
+    ! *******************************************************************************
+    ! ************* Export FW and divertor fluxes and currents **********************
+    ! *******************************************************************************
+    ! --- Export grid boundary geometry as thin triangles (FW + divertor)
+    if (first_step) then
+      ! --- Put the wall grid in GGD
+      allocate( transport_ids%grid_ggd(n_grid) )
+      grid => transport_ids%grid_ggd(grid_ind)
+      grid%time = time_SI
+    
+      call triang_thin_wall_2ggd( grid, PFC_triang_grid%tria_xyz, PFC_triang_grid%tria_connectivity, subset_choice="nodes")
+    else   
+      if ( associated(transport_ids%grid_ggd)) then
+        call ids_deallocate_struct(transport_ids%grid_ggd(grid_ind), .false.) 
+      end if                                                     
+    endif
+
+    allocate( transport_ids%model(1) )
+    allocate( transport_ids%model(i_model)%ggd(n_slice) )
+  
+    transport_ids%time(i_slice) = time_SI 
+    transport_ids%model(i_model)%ggd(i_slice)%time = time_SI
+
+    ! --- Fill expressions in the wall nodes
+    n_pol = PFC_triang_grid%n_pol
+    n_phi = PFC_triang_grid%n_phi
+    n_wall_nodes = PFC_triang_grid%n_nodes
+
+    do i_exp=1, expr_list_bnd%n_expr
+      
+      ! --- Total heatflux
+      if (expr_list_bnd%expr(i_exp)%name=='q_par_e') then
+        allocate( transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(n_grid_sub) )
+        allocate( transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%values(n_wall_nodes) ) ! --- one value per node
+
+        transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%grid_index        = 1
+        transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%grid_subset_index = 1
+
+        do i_phi=1, n_phi
+          do i_pol=1, n_pol 
+            i = i_pol + (i_phi-1)*n_pol  !< Global index of refence node
+            transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%values(i) = res_bnd(i_phi,i_pol,i_exp)
+          enddo
+        enddo
+      endif
+
+    enddo
+    ! *******************************************************************************
+  
+  end subroutine fill_transport_IDS
  
 
 
@@ -880,7 +842,7 @@ module mod_jorek2IMAS
       ! --- Velocity of centre of mass at shattering location
       spi%injector(i_inj)%velocity_mass_centre_fragments_r   = spi_vel_Rref(i_inj)
       spi%injector(i_inj)%velocity_mass_centre_fragments_z   = spi_vel_Zref(i_inj)
-      spi%injector(i_inj)%velocity_mass_centre_fragments_tor = spi_vel_RxZref(i_inj) * fact_phi_dir
+      spi%injector(i_inj)%velocity_mass_centre_fragments_phi = spi_vel_RxZref(i_inj) * fact_phi_dir
 
       ! --- Fragment properties
       allocate( spi%injector(i_inj)%fragment( n_spi(i_inj) ) )
@@ -891,7 +853,7 @@ module mod_jorek2IMAS
         allocate( spi%injector(i_inj)%fragment(i_frag)%position%phi(n_slice) )
         allocate( spi%injector(i_inj)%fragment(i_frag)%velocity_r(n_slice)   )
         allocate( spi%injector(i_inj)%fragment(i_frag)%velocity_z(n_slice)   )
-        allocate( spi%injector(i_inj)%fragment(i_frag)%velocity_tor(n_slice) )
+        allocate( spi%injector(i_inj)%fragment(i_frag)%velocity_phi(n_slice) )
         allocate( spi%injector(i_inj)%fragment(i_frag)%volume(n_slice)       ) 
         
         i_frag_glob = i_frag - 1 + n_spi_begin
@@ -902,7 +864,7 @@ module mod_jorek2IMAS
 
         spi%injector(i_inj)%fragment(i_frag)%velocity_r(i_slice)   = pellets(i_frag_glob)%spi_vel_r
         spi%injector(i_inj)%fragment(i_frag)%velocity_z(i_slice)   = pellets(i_frag_glob)%spi_vel_z
-        spi%injector(i_inj)%fragment(i_frag)%velocity_tor(i_slice) = pellets(i_frag_glob)%spi_vel_rxz * fact_phi_dir
+        spi%injector(i_inj)%fragment(i_frag)%velocity_phi(i_slice) = pellets(i_frag_glob)%spi_vel_rxz * fact_phi_dir
 
         spi%injector(i_inj)%fragment(i_frag)%volume(i_slice) = 4.d0/3.d0*PI*pellets(i_frag_glob)%spi_radius**3.d0 
       enddo ! --- fragments
@@ -1425,6 +1387,47 @@ module mod_jorek2IMAS
     deallocate(res, q_prof, rho_tor)
     
   end subroutine get_average_data
+
+
+
+
+
+
+  ! --- Get values at JOREK boundary
+  subroutine get_boudary_data(n_phi, result)
+
+    implicit none
+
+    real*8, allocatable, intent(inout)  :: result(:,:,:)
+    integer, intent(in)                 :: n_phi   ! Number of points in toroidal direction for boundary data
+    character(10)        :: str
+    integer              :: ierr, n_phi_points
+    logical              :: first_step
+    type(type_command)   :: command_tmp
+
+    ! --- Arguments for boundary quantities
+    step_imported      = .true.
+    command_tmp%n_args = 3
+    command_tmp%args(1) = '0'              ! phimin
+    command_tmp%args(2) = '6.28318530718'  ! phimax
+    n_phi_points = max(n_phi, n_tor* 3)
+    write(str, '(I0)') n_phi_points
+    command_tmp%args(3) = str  
+    call clean_up()
+    expr_list = exprs((/'x', 'y', 'z', 'Psi', 'A_R', 'A_Z', &
+                        'BR', 'BZ', 'Btor', 'JR', 'JZ', 'Jtor',  &
+                        'heatF_total', 'partF_total', 'npartF_total'/), 15)
+
+    expr_list_bnd = expr_list
+
+    call boundary_quantities(command_tmp, first_step==.true., ierr, result)
+    call clean_up()
+  
+  end subroutine get_boudary_data
+
+
+  
+
 
   
   subroutine fill_equilibrium_IDS(first_step, time_SI, n_grid, res0D, expr_avg_list, avg, equilibrium_ids, rect_grid_params)  
@@ -2578,6 +2581,150 @@ module mod_jorek2IMAS
 
 
   end subroutine rect_grid2ggd
+
+
+
+
+
+  !< Fills a triangular thin wall grid into GGD. The wall is described with linear triangles, so only node coordinates and triangle connectivity are needed.
+  subroutine triang_thin_wall_2ggd( grid, nodes_xyz, tria_connectivity, subset_choice)
+  
+    implicit none
+  
+    ! --- External parameters
+    type(ids_generic_grid_aos3_root),  pointer, intent(inout)   :: grid
+    real*8,           intent(in) :: nodes_xyz(:,:)           !< First index is node number, second index is coordinate (1,2,3 for x,y,z)
+    integer,          intent(in) :: tria_connectivity(:,:)   !< First index is triangle number, second index is global node index of each triangle node (3 nodes per triangle)
+    character(len=*), intent(in) :: subset_choice            !< Choice of grid subset to create: "nodes" or "triangles"
+
+    ! --- Local parameters
+    integer :: n_wall_nodes, n_wall_triangles, i
+
+    n_wall_nodes    = size(nodes_xyz,1)
+    n_wall_triangles = size(tria_connectivity,1)
+
+    grid%identifier%index = 0   ! Unspecified
+    allocate( grid%identifier%description(1))
+    allocate( grid%identifier%name(1))
+    grid%identifier%description = "Thin wall described with linear triangles"
+    grid%identifier%name        = "Thin triangular wall"
+
+    allocate(grid%space(1))
+
+    ! --- Identifier
+    allocate( grid%space(1)%identifier%description(1))
+    allocate( grid%space(1)%identifier%name(1))
+    grid%space(1)%identifier%index       = 1  ! Primary space
+    grid%space(1)%identifier%description = "This is just a 3D cartesian space"
+    grid%space(1)%identifier%name        = "Primary space"
+
+    grid%space(1)%geometry_type%index = 0  ! Standard (not Fourier)
+    allocate(grid%space(1)%coordinates_type(3))
+
+    ! --- Identifiers for (x,y,z) type coordinates (1,2,3)
+    grid%space(1)%coordinates_type(1)%index = 1
+    grid%space(1)%coordinates_type(2)%index = 2
+    grid%space(1)%coordinates_type(3)%index = 3
+
+    allocate(grid%space(1)%objects_per_dimension(3))
+
+    ! --- Save wall grid nodes
+    allocate(grid%space(1)%objects_per_dimension(1)%object(n_wall_nodes))
+    grid%space(1)%objects_per_dimension(1)%geometry_content%index = 1  ! node coordinates
+    do i=1, n_wall_nodes
+      allocate( grid%space(1)%objects_per_dimension(1)%object(i)%geometry(3) ) ! Allocate dimensions for each node
+      grid%space(1)%objects_per_dimension(1)%object(i)%geometry(:) = nodes_xyz(i, :)  
+    enddo
+
+    ! --- Save thin wall triangles 
+    allocate(grid%space(1)%objects_per_dimension(3)%object(n_wall_triangles))  ! Index 3 for 2D objects (faces)
+    do i=1, n_wall_triangles
+      allocate( grid%space(1)%objects_per_dimension(3)%object(i)%nodes(3) ) ! 3 nodes per triangle
+      grid%space(1)%objects_per_dimension(3)%object(i)%nodes(:) = tria_connectivity(i, :)
+    enddo
+
+    ! --- Create the grid substet for either nodes or triangles 
+    ! ---   (values are asigned either at triangle centers or at nodes, so only one of the two subsets is needed) 
+    allocate(grid%grid_subset(1))
+    allocate(grid%grid_subset(1)%identifier%name(1))
+    allocate(grid%grid_subset(1)%identifier%description(1))
+    
+    if (trim(subset_choice) == "nodes") then
+      grid%grid_subset(1)%identifier%index = 1  ! Identifier index for 0D nodes in the dictionary
+      grid%grid_subset(1)%identifier%name  = "0D nodes"
+      grid%grid_subset(1)%identifier%description = "Triangle nodes of the grid"
+      grid%grid_subset(1)%dimension        = 1  ! Index 1 means 0 dimensions in the dictionary (for 0D nodes)
+    else if (trim(subset_choice) == "triangles") then
+      grid%grid_subset(1)%identifier%index = 5  ! Identifier index for 2D cells in the dictionary
+      grid%grid_subset(1)%identifier%name = "2D triangles"
+      grid%grid_subset(1)%identifier%description = "2D cells representing the linear thin triangles"
+      grid%grid_subset(1)%dimension        = 3  ! Index 3 means 2 dimensions in the dictionary
+    else
+      write(*,*) "Error: subset_choice should be either 'nodes' or 'triangles'"
+      stop
+    end if
+  
+  end subroutine triang_thin_wall_2ggd
+
+
+
+
+
+  ! --- Create a triangular thing wall from the JOREK boundary
+  subroutine triangulate_thin_wall_from_bnd(bnd_points, n_phi, PFC_wall)
+
+    implicit none
+
+    real*8,  intent(in) :: bnd_points(:,:,:)  !< indexing: (i_phi, i_pol, i_quantity), i_quantity=1,2,3 for x,y,z coordinates
+    integer, intent(in) :: n_phi
+    type(t_PFC_triang_grid), intent(inout) :: PFC_wall
+
+    integer :: i_phi, i_pol, ipol1, ipol2, ipol3, ipol4, itor1, itor2, itor3, itor4, n_pol
+    integer :: i, i1, i2, i3, i4, i_tri, n_wall_triangles, n_wall_nodes
+
+    n_pol          = size(bnd_points, 2)
+    PFC_wall%n_pol = n_pol
+    PFC_wall%n_phi = n_phi
+
+    n_wall_triangles = 2 * n_phi * n_pol 
+    n_wall_nodes     = n_phi * n_pol 
+
+    allocate(PFC_wall%tria_xyz(n_wall_nodes,3))
+    allocate(PFC_wall%tria_connectivity(n_wall_triangles,3))
+
+    ! --- Construct triangles and connectivity 
+    do i_phi=1, n_phi
+      do i_pol=1, n_pol
+        
+        i = i_pol + (i_phi-1)*n_pol  !< Global index of refence node
+
+        ! --- Get global indices of the 4 nodes forming a quadrilateral, and make two triangles out of it
+        ipol1 = i_pol;                  itor1 = i_phi;
+        ipol2 = mod(i_pol,n_pol) + 1;   itor2 = i_phi;
+        ipol3 = mod(i_pol,n_pol) + 1;   itor3 = mod(i_phi,n_phi) + 1;
+        ipol4 = i_pol;                  itor4 = mod(i_phi,n_phi) + 1;
+
+        i1 = ipol1 + (itor1-1)*n_pol
+        i2 = ipol2 + (itor2-1)*n_pol
+        i3 = ipol3 + (itor3-1)*n_pol
+        i4 = ipol4 + (itor4-1)*n_pol
+        
+        ! --- Fill in reference node coordinates
+        PFC_wall%tria_xyz(i,:) =  (/ bnd_points(itor1,ipol1,1), bnd_points(itor1,ipol1,2), bnd_points(itor1,ipol1,3) /) ! x, y, z coordinates
+
+        ! --- Fill in two triangles
+        ! --- Triangle 1
+        i_tri = i_tri + 1
+        PFC_wall%tria_connectivity(i_tri,:) = (/ i1, i2, i3 /)  ! The node indices of this triangle
+
+        ! --- Triangle 2
+        i_tri = i_tri + 1
+        PFC_wall%tria_connectivity(i_tri,:) = (/ i1, i3, i4 /)  ! The node indices of this triangle
+      enddo
+    enddo
+
+  end subroutine triangulate_thin_wall_from_bnd
+
 
 
 
