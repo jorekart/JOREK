@@ -265,8 +265,8 @@ program jorek2_IDS
 
     ! --- Get boundary data and create grid for the JOREK boundary
     if (export_wall .or. export_transport) then
-      call get_boudary_data(n_phi=n_phi_PFC_wall, result=res_bnd)
-      call triangulate_thin_wall_from_bnd(bnd_points=res_bnd, n_phi=n_phi_PFC_wall, PFC_wall=PFC_wall_grid)
+      call get_boundary_data(n_phi=n_phi_PFC_wall, result=res_bnd)
+      if (first_step) call triangulate_thin_wall_from_bnd(bnd_points=res_bnd, PFC_wall=PFC_wall_grid)
     end if
 
     ! --- Fill and export a plasma profiles IDS with the JOREK variables
@@ -336,7 +336,7 @@ program jorek2_IDS
       if (export_summary)          call ids_put(idx,'summary',summary_ids,stat_sum)
       if (export_disruption)       call ids_put(idx,'disruption',disruption_ids,stat_dis)
       if (export_spi)              call ids_put(idx,'spi',spi_ids,stat_spi)
-      if (export_transport)        call ids_put(idx,'transport',transport_ids,stat_trans)
+      if (export_transport)        call ids_put(idx,'plasma_transport',transport_ids,stat_trans)
     else
       if (export_1d_profiles)      call ids_put_slice(idx,'plasma_profiles',plasma_profiles_ids,stat_core)
       if (export_JOREK_variables)  call ids_put_slice(idx,'plasma_profiles/1',plasma_profiles_ids1,stat_mhd)
@@ -349,7 +349,7 @@ program jorek2_IDS
       if (export_summary)          call ids_put_slice(idx,'summary',summary_ids,stat_sum)
       if (export_disruption)       call ids_put_slice(idx,'disruption',disruption_ids,stat_dis)
       if (export_spi)              call ids_put_slice(idx,'spi',spi_ids,stat_spi)
-      if (export_transport)        call ids_put_slice(idx,'transport',transport_ids,stat_trans)
+      if (export_transport)        call ids_put_slice(idx,'plasma_transport',transport_ids,stat_trans)
     endif
 
     if (export_JOREK_variables.and. (stat_mhd==0 ))  write(*,*) '    JOREK variables exported to plasma profiles IDS'

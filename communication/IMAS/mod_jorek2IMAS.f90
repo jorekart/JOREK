@@ -594,8 +594,10 @@ module mod_jorek2IMAS
   
 
 
-  ! --- Fill a wall IDS from STARWALL data, needs to be adapted to CARIDDI!
-  subroutine fill_transport_IDS(first_step, time_SI, transport_ids, res_bnd, PFC_triang_grid)  
+  ! --- Fill a plasma transport IDS with boundary heat fluxes
+  subroutine fill_transport_IDS(first_step, time_SI, transport_ids, res_bnd, PFC_triang_grid)
+
+    use phys_module, only: central_mass
 
     implicit none
 
@@ -609,7 +611,9 @@ module mod_jorek2IMAS
     ! --- Local parameters 
     integer    :: i, j, k, m, i_tor, index, index_node, my_id=0, ierr, i_tri
     integer    :: i_phi, i_pol, n_phi, n_pol, n_wall_nodes
-    integer    :: i_exp
+    integer    :: i_exp, i_qpar_e, i_qpar_i, i_partf
+    real*8     :: qpar_e, qpar_i
+    real*8     :: partf
 
     ! **********************************************************************************
     ! ******************************* IMAS **********************************************
@@ -624,10 +628,13 @@ module mod_jorek2IMAS
     n_grid       = 1
     n_grid_sub   = 1
     grid_ind     = 1  ! Index
-    grid_sub_ind = 1  ! Index    
+    grid_sub_ind = 1  ! Index
     i_model      = 1
+    n_slice      = 1
+    i_slice      = 1
 
     transport_ids%ids_properties%homogeneous_time = IDS_TIME_MODE_HETEROGENEOUS
+    allocate(transport_ids%time(n_slice))
 
     ! *******************************************************************************
     ! ************* Export FW and divertor fluxes and currents **********************
@@ -640,16 +647,17 @@ module mod_jorek2IMAS
       grid%time = time_SI
     
       call triang_thin_wall_2ggd( grid, PFC_triang_grid%tria_xyz, PFC_triang_grid%tria_connectivity, subset_choice="nodes")
-    else   
+    else
       if ( associated(transport_ids%grid_ggd)) then
-        call ids_deallocate_struct(transport_ids%grid_ggd(grid_ind), .false.) 
-      end if                                                     
+        call ids_deallocate_struct(transport_ids%grid_ggd(grid_ind), .false.)
+        deallocate(transport_ids%grid_ggd)
+      end if
     endif
 
     allocate( transport_ids%model(1) )
     allocate( transport_ids%model(i_model)%ggd(n_slice) )
   
-    transport_ids%time(i_slice) = time_SI 
+    transport_ids%time(i_slice) = time_SI
     transport_ids%model(i_model)%ggd(i_slice)%time = time_SI
 
     ! --- Fill expressions in the wall nodes
@@ -657,25 +665,57 @@ module mod_jorek2IMAS
     n_phi = PFC_triang_grid%n_phi
     n_wall_nodes = PFC_triang_grid%n_nodes
 
+    i_qpar_e   = 0
+    i_qpar_i   = 0
+    i_partf    = 0
     do i_exp=1, expr_list_bnd%n_expr
-      
-      ! --- Total heatflux
-      if (expr_list_bnd%expr(i_exp)%name=='q_par_e') then
-        allocate( transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(n_grid_sub) )
-        allocate( transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%values(n_wall_nodes) ) ! --- one value per node
-
-        transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%grid_index        = 1
-        transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%grid_subset_index = 1
-
-        do i_phi=1, n_phi
-          do i_pol=1, n_pol 
-            i = i_pol + (i_phi-1)*n_pol  !< Global index of refence node
-            transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%values(i) = res_bnd(i_phi,i_pol,i_exp)
-          enddo
-        enddo
-      endif
-
+      select case (trim(expr_list_bnd%expr(i_exp)%name))
+      case ('qpar_e')
+        i_qpar_e = i_exp
+      case ('qpar_i')
+        i_qpar_i = i_exp
+      case ('partF_par')
+        i_partf = i_exp
+      end select
     enddo
+
+    if (i_qpar_e == 0 .or. i_qpar_i == 0 .or. i_partf == 0) then
+      write(*,*) 'ERROR: heat and particle flux expressions are missing for the plasma_transport IDS'
+      stop
+    endif
+
+    allocate(transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(n_grid_sub))
+    allocate(transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%values(n_wall_nodes))
+    transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%grid_index = grid_ind
+    transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%grid_subset_index = grid_sub_ind
+
+    allocate(transport_ids%model(i_model)%ggd(i_slice)%total_ion_energy%flux_parallel(n_grid_sub))
+    allocate(transport_ids%model(i_model)%ggd(i_slice)%total_ion_energy%flux_parallel(1)%values(n_wall_nodes))
+    transport_ids%model(i_model)%ggd(i_slice)%total_ion_energy%flux_parallel(1)%grid_index = grid_ind
+    transport_ids%model(i_model)%ggd(i_slice)%total_ion_energy%flux_parallel(1)%grid_subset_index = grid_sub_ind
+
+    allocate(transport_ids%model(i_model)%ggd(i_slice)%ion(1))
+    allocate(transport_ids%model(i_model)%ggd(i_slice)%ion(1)%element(1))
+    transport_ids%model(i_model)%ggd(i_slice)%ion(1)%element(1)%a = central_mass
+    transport_ids%model(i_model)%ggd(i_slice)%ion(1)%element(1)%z_n = 1
+    allocate(transport_ids%model(i_model)%ggd(i_slice)%ion(1)%particles%flux_parallel(n_grid_sub))
+    allocate(transport_ids%model(i_model)%ggd(i_slice)%ion(1)%particles%flux_parallel(1)%values(n_wall_nodes))
+    transport_ids%model(i_model)%ggd(i_slice)%ion(1)%particles%flux_parallel(1)%grid_index = grid_ind
+    transport_ids%model(i_model)%ggd(i_slice)%ion(1)%particles%flux_parallel(1)%grid_subset_index = grid_sub_ind
+
+    do i_phi=1, n_phi
+      do i_pol=1, n_pol
+        i = i_pol + (i_phi-1)*n_pol  !< Global index of reference node
+        qpar_e   = res_bnd(i_phi,i_pol,i_qpar_e)
+        qpar_i   = res_bnd(i_phi,i_pol,i_qpar_i)
+        partf = res_bnd(i_phi,i_pol,i_partf)
+
+        transport_ids%model(i_model)%ggd(i_slice)%electrons%energy%flux_parallel(1)%values(i) = qpar_e
+        transport_ids%model(i_model)%ggd(i_slice)%total_ion_energy%flux_parallel(1)%values(i) = qpar_i
+        transport_ids%model(i_model)%ggd(i_slice)%ion(1)%particles%flux_parallel(1)%values(i) = partf
+      enddo
+    enddo
+
     ! *******************************************************************************
   
   end subroutine fill_transport_IDS
@@ -1394,7 +1434,7 @@ module mod_jorek2IMAS
 
 
   ! --- Get values at JOREK boundary
-  subroutine get_boudary_data(n_phi, result)
+  subroutine get_boundary_data(n_phi, result)
 
     implicit none
 
@@ -1402,7 +1442,6 @@ module mod_jorek2IMAS
     integer, intent(in)                 :: n_phi   ! Number of points in toroidal direction for boundary data
     character(10)        :: str
     integer              :: ierr, n_phi_points
-    logical              :: first_step
     type(type_command)   :: command_tmp
 
     ! --- Arguments for boundary quantities
@@ -1416,14 +1455,15 @@ module mod_jorek2IMAS
     call clean_up()
     expr_list = exprs((/'x', 'y', 'z', 'Psi', 'A_R', 'A_Z', &
                         'BR', 'BZ', 'Btor', 'JR', 'JZ', 'Jtor',  &
-                        'heatF_total', 'partF_total', 'npartF_total'/), 15)
+                        'heatF_total', 'partF_total', 'npartF_total', &
+                        'qpar_e', 'qpar_i', 'partF_par'/), 18)
 
     expr_list_bnd = expr_list
 
-    call boundary_quantities(command_tmp, first_step==.true., ierr, result)
+    call boundary_quantities(command_tmp, .true., ierr, result)
     call clean_up()
   
-  end subroutine get_boudary_data
+  end subroutine get_boundary_data
 
 
   
@@ -2671,28 +2711,33 @@ module mod_jorek2IMAS
 
 
   ! --- Create a triangular thing wall from the JOREK boundary
-  subroutine triangulate_thin_wall_from_bnd(bnd_points, n_phi, PFC_wall)
+  subroutine triangulate_thin_wall_from_bnd(bnd_points, PFC_wall)
 
     implicit none
 
     real*8,  intent(in) :: bnd_points(:,:,:)  !< indexing: (i_phi, i_pol, i_quantity), i_quantity=1,2,3 for x,y,z coordinates
-    integer, intent(in) :: n_phi
     type(t_PFC_triang_grid), intent(inout) :: PFC_wall
 
-    integer :: i_phi, i_pol, ipol1, ipol2, ipol3, ipol4, itor1, itor2, itor3, itor4, n_pol
+    integer :: i_phi, i_pol, ipol1, ipol2, ipol3, ipol4, itor1, itor2, itor3, itor4, n_phi, n_pol
     integer :: i, i1, i2, i3, i4, i_tri, n_wall_triangles, n_wall_nodes
 
+    n_phi          = size(bnd_points, 1)
     n_pol          = size(bnd_points, 2)
     PFC_wall%n_pol = n_pol
     PFC_wall%n_phi = n_phi
 
-    n_wall_triangles = 2 * n_phi * n_pol 
-    n_wall_nodes     = n_phi * n_pol 
+    n_wall_triangles      = 2 * n_phi * n_pol
+    n_wall_nodes          = n_phi * n_pol
+    PFC_wall%n_triangles  = n_wall_triangles
+    PFC_wall%n_nodes      = n_wall_nodes
 
+    if (allocated(PFC_wall%tria_xyz)) deallocate(PFC_wall%tria_xyz)
+    if (allocated(PFC_wall%tria_connectivity)) deallocate(PFC_wall%tria_connectivity)
     allocate(PFC_wall%tria_xyz(n_wall_nodes,3))
     allocate(PFC_wall%tria_connectivity(n_wall_triangles,3))
 
-    ! --- Construct triangles and connectivity 
+    ! --- Construct triangles and connectivity
+    i_tri = 0
     do i_phi=1, n_phi
       do i_pol=1, n_pol
         
