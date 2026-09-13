@@ -59,7 +59,17 @@ python imas2jorek.py \
     --time TIME
 ```
 
-Display all arguments and defaults, including the storage backend, Data Dictionary major version, IDS occurrence, and tokamak used to construct the boundary, with:
+With IMAS-Python 2, a URI is preferred and can point directly to a local HDF5 entry or another supported backend:
+
+```bash
+python imas2jorek.py \
+    --uri 'imas:hdf5?path=/path/to/imas/data' \
+    --time TIME
+```
+
+`--uri` takes precedence over `--user`, `--database`, `--pulse`, `--run`, and `--backend`. By default, the script detects the stored DD version from the entry metadata and reopens the entry with that version. Use `--dd-version` only to request an explicit target version; cross-major-version conversion may require additional Access Layer configuration.
+
+Display all arguments and defaults, including the storage backend, Data Dictionary version, IDS occurrence, and tokamak used to construct the boundary, with:
 
 ```bash
 python imas2jorek.py -h
@@ -71,6 +81,8 @@ After `imas2jorek.py` finishes, it produces:
 
 - `jorek_namelist`, containing the poloidal-flux boundary conditions and coil currents.
 - `jorek_density`, `jorek_temperature`, and `jorek_ffprime`, containing the profiles.
+
+The `pf_active` IDS is optional. If the selected occurrence is empty, the script reports a warning and generates the input without imported coil currents.
 
 ## Exporting JOREK Data to IMAS
 
