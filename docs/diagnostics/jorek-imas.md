@@ -140,6 +140,9 @@ In the simulation directory containing the restart files, create `imas.nml`. The
   export_equilibrium      = .false.
   export_summary          = .false.
   export_disruption       = .false.
+  ! Optional summary/disruption metadata; leave at -999 to keep the nodes empty.
+  summary_disruption_type = -999              ! 1 = major, 2 = VDE
+  summary_disruption_vertical_displacement = -999  ! 1 = upwards, 0 = no displacement, -1 = downwards
   export_wall             = .false.    ! --- Needs free-boundary mode
   export_pf_passive       = .false.    ! --- Needs free-boundary mode
   export_pf_active        = .false.    ! --- Needs free-boundary mode

@@ -1118,7 +1118,7 @@ module mod_jorek2IMAS
           radiation_ids%process(1)%profiles_1d(i_slice)%grid%rho_pol_norm(:)   = sqrt(avg(:,i_exp))
         end if
 
-        if (expr_avg_list%expr(i_exp)%name=='Psi_N') then
+        if (expr_avg_list%expr(i_exp)%name=='Psi') then
           ! --- Psi
           allocate( radiation_ids%process(1)%profiles_1d(i_slice)%grid%psi(n_grid_1d) )
           radiation_ids%process(1)%profiles_1d(i_slice)%grid%psi(:)   = avg(:,i_exp) * fact_psi
@@ -1201,91 +1201,91 @@ module mod_jorek2IMAS
       endif
 
       ! --- Psi
-      if (expr_list%expr(i_exp)%name=='Psi') then
+      if (expr_avg_list%expr(i_exp)%name=='Psi') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%grid%psi(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%grid%psi(:)   = avg(:,i_exp) * fact_psi
       endif
 
       ! --- Ion temperature
-      if (expr_list%expr(i_exp)%name=='T_i') then
+      if (expr_avg_list%expr(i_exp)%name=='T_i') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%t_i_average(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%t_i_average(:) = avg(:,i_exp)
       endif
 
       ! --- Electron temperature
-      if (expr_list%expr(i_exp)%name=='T_e') then
+      if (expr_avg_list%expr(i_exp)%name=='T_e') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%electrons%temperature(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%electrons%temperature(:) = avg(:,i_exp)
       endif
 
       ! --- Electron density
-      if (expr_list%expr(i_exp)%name=='ne') then
+      if (expr_avg_list%expr(i_exp)%name=='ne') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%electrons%density(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%electrons%density(:) = avg(:,i_exp)
       endif
 
       ! --- Total pressure
-      if (expr_list%expr(i_exp)%name=='pres') then
+      if (expr_avg_list%expr(i_exp)%name=='pres') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%pressure_thermal(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%pressure_thermal(:) = avg(:,i_exp)
       endif
 
       ! --- Electrostatic potential
-      if (expr_list%expr(i_exp)%name=='Phi') then
+      if (expr_avg_list%expr(i_exp)%name=='Phi') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%phi_potential(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%phi_potential(:) = avg(:,i_exp)
       endif
 
       ! --- Parallel conductivity
-      if (expr_list%expr(i_exp)%name=='eta_T') then
+      if (expr_avg_list%expr(i_exp)%name=='eta_T') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%conductivity_parallel(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%conductivity_parallel(:) = 1.d0 / avg(:,i_exp)
       endif
 
       ! --- Parallel current density
-      if (expr_list%expr(i_exp)%name=='Jpar') then
+      if (expr_avg_list%expr(i_exp)%name=='Jpar') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%j_total(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%j_total(:) = avg(:,i_exp)
       endif
 
       ! --- Parallel electric field
-      if (expr_list%expr(i_exp)%name=='E_||') then
+      if (expr_avg_list%expr(i_exp)%name=='E_||') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%e_field%parallel(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%e_field%parallel(:) = avg(:,i_exp)
       endif
 
       ! --- Radial electric field
-      if (expr_list%expr(i_exp)%name=='Er') then
+      if (expr_avg_list%expr(i_exp)%name=='Er') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%e_field%radial(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%e_field%radial(:) = avg(:,i_exp)
       endif
 
       ! --- Parallel velocity
-      if (expr_list%expr(i_exp)%name=='vpar') then
+      if (expr_avg_list%expr(i_exp)%name=='vpar') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_main)%velocity%parallel(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_main)%velocity%parallel(:) = avg(:,i_exp)
       endif
 
       ! --- Poloidal velocity
-      if (expr_list%expr(i_exp)%name=='Vtheta_i') then
+      if (expr_avg_list%expr(i_exp)%name=='Vtheta_i') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_main)%velocity%poloidal(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_main)%velocity%poloidal(:) = avg(:,i_exp)
       endif
 
       ! --- Diamagnetic velocity
-      if (expr_list%expr(i_exp)%name=='Vstar_i') then
+      if (expr_avg_list%expr(i_exp)%name=='Vstar_i') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_main)%velocity%diamagnetic(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_main)%velocity%diamagnetic(:) = avg(:,i_exp)
       endif
 
       ! --- Z_eff
-      if (expr_list%expr(i_exp)%name=='Z_eff') then
+      if (expr_avg_list%expr(i_exp)%name=='Z_eff') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%zeff(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%zeff(:) = avg(:,i_exp)
       endif
 
       ! --- Ion density
-      if (expr_list%expr(i_exp)%name=='ni_main') then
+      if (expr_avg_list%expr(i_exp)%name=='ni_main') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_main)%density(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_main)%density(:) = avg(:,i_exp) 
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_main)%element(1) )
@@ -1294,7 +1294,7 @@ module mod_jorek2IMAS
       endif
 
       ! --- Neutral density (of main ions)
-      if (expr_list%expr(i_exp)%name=='nn_main') then
+      if (expr_avg_list%expr(i_exp)%name=='nn_main') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%neutral(i_ion_main)%density(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%neutral(i_ion_main)%density(:) = avg(:,i_exp) 
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%neutral(i_ion_main)%element(1) )
@@ -1303,7 +1303,7 @@ module mod_jorek2IMAS
       endif
 
       ! --- Main impurity density
-      if (expr_list%expr(i_exp)%name=='nimp') then   ! ion index 2 is for the main impurity species
+      if (expr_avg_list%expr(i_exp)%name=='nimp') then   ! ion index 2 is for the main impurity species
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_imp)%density(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_imp)%density(:) = avg(:,i_exp)
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%ion(i_ion_imp)%element(1) )
@@ -1386,10 +1386,12 @@ module mod_jorek2IMAS
     real*8, allocatable :: q_prof(:), rho_tor(:)
     integer :: i_psi, ierr
 
+    ! Keep each expression only once: the IDS fill routines allocate one
+    ! destination per expression name.
     expr_list = exprs((/'Psi_N', 'Psi', 'pres', 'FFprime_loc', 'p_prime_loc', &
-        'Jpar', 'T_i', 'T_e', 'ne', 'pres', 'Phi', 'eta_T', 'Jpar', &
-        'E_||', 'Er', 'vpar', 'Vtheta_i', 'Vstar_i', 'rho', 'Psi', 'Z_eff', 'nimp', &
-        'ni_main', 'nn_main', 'radiation' /), 25)
+        'Jpar', 'T_i', 'T_e', 'ne', 'Phi', 'eta_T', 'E_||', 'Er', 'vpar', &
+        'Vtheta_i', 'Vstar_i', 'rho', 'Z_eff', 'nimp', 'ni_main', 'nn_main', &
+        'radiation' /), 22)
     
     command_tmp%n_args = 0
     step_imported = .true.
@@ -1779,7 +1781,8 @@ module mod_jorek2IMAS
 
 
 
-  subroutine fill_summary_IDS(first_step, time_SI, res0D, summary_ids, simulation_description)  
+  subroutine fill_summary_IDS(first_step, time_SI, res0D, summary_ids, simulation_description, &
+                              summary_disruption_type, summary_disruption_vertical_displacement)
 
     implicit none
 
@@ -1789,6 +1792,8 @@ module mod_jorek2IMAS
     real*8, allocatable, intent(in) :: res0D(:)     ! List of 0D quantities defined in exprs_all_int (mod_expressions.f90)
     type(ids_summary),  intent(inout)  :: summary_ids
     character(len=1000)             :: simulation_description
+    integer, intent(in)             :: summary_disruption_type
+    integer, intent(in)             :: summary_disruption_vertical_displacement
    
     ! --- Local parameters 
     integer    :: i, j, k, m, var_rad, i_var, i_tor, index, index_node, my_id, ierr
@@ -1927,6 +1932,15 @@ module mod_jorek2IMAS
     summary_ids%boundary%geometric_axis_r%value(i_slice)       = ES%LCFS_Rgeo
     allocate(summary_ids%boundary%geometric_axis_z%value(n_slice))
     summary_ids%boundary%geometric_axis_z%value(i_slice)       = ES%LCFS_Zgeo
+
+    ! --- Optional disruption metadata. Leave these nodes empty unless the
+    !     corresponding values were explicitly provided in imas.nml.
+    if (summary_disruption_type /= -999) then
+      summary_ids%disruption%type%index = summary_disruption_type
+    endif
+    if (summary_disruption_vertical_displacement /= -999) then
+      summary_ids%disruption%vertical_displacement%value = summary_disruption_vertical_displacement
+    endif
 
   end subroutine fill_summary_IDS
 

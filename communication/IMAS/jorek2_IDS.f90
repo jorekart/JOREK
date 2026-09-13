@@ -26,6 +26,7 @@ program jorek2_IDS
   integer :: shot_number, run_number, i_begin, i_end, i_step, i_jump_steps, i_fmt
   integer :: ierr, idx, stat_mhd, stat_core, stat_rad, stat_eq, n_grid, stat, stat_wall, n_phi_PFC_wall=32
   integer :: stat_pass, stat_act, stat_sum, stat_dis, stat_vac, stat_spi, stat_trans
+  integer :: summary_disruption_type, summary_disruption_vertical_displacement
   logical :: first_step, file_exists, rad_only_projections_h5, overwrite_entry
   logical :: export_JOREK_variables, export_radiation, export_1d_profiles, export_equilibrium
   logical :: export_wall, export_pf_passive, export_pf_active, export_summary, export_disruption
@@ -66,7 +67,8 @@ program jorek2_IDS
                          active_coil_geo_file, wall_thickness, export_disruption,    &
                          export_summary, overwrite_entry, i_jump_steps,              &
                          simulation_description, export_field_extension,             &
-                         rect_grid_params, backend, export_spi, export_transport 
+                         rect_grid_params, backend, export_spi, export_transport,    &
+                         summary_disruption_type, summary_disruption_vertical_displacement
 
   ! --- Necessary initialization ------------------
   ! --- MPI initialization (for wall current reconstruction)
@@ -150,6 +152,8 @@ program jorek2_IDS
   export_disruption    = .false.
   export_spi           = .false.
   export_transport     = .false.      
+  summary_disruption_type = -999       !< Optional summary/disruption/type/index
+  summary_disruption_vertical_displacement = -999  !< Optional summary/disruption/vertical_displacement/value
   rad_only_projections_h5 = .false.    !< use only *.h5 projection files for radiation IDS (single jorek_restart.h5 still needed)
   overwrite_entry      = .false.       !< If true, it overwrites the shot/run even if it already exists in the database.
                                        !  Otherwise it appends the IDSs to the existing entry
@@ -280,7 +284,8 @@ program jorek2_IDS
 
 
     if (export_equilibrium) call fill_equilibrium_IDS(first_step, time_SI, n_grid, res0D, expr_avg_list, avg, equilibrium_ids, rect_grid_params)  
-    if (export_summary)     call fill_summary_IDS(first_step, time_SI, res0D, summary_ids, simulation_description)  
+    if (export_summary)     call fill_summary_IDS(first_step, time_SI, res0D, summary_ids, simulation_description, &
+                                                   summary_disruption_type, summary_disruption_vertical_displacement)
     if (export_disruption)  call fill_disruption_IDS(first_step, time_SI, res0D, disruption_ids) 
     if (export_transport)   call fill_transport_IDS(first_step, time_SI, transport_ids, res_bnd, PFC_wall_grid)
 
