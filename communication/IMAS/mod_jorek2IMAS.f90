@@ -1193,7 +1193,7 @@ module mod_jorek2IMAS
     do i_exp=1, expr_avg_list%n_expr
 
       ! --- Psi_N
-      if (expr_list%expr(i_exp)%name=='Psi_N') then
+      if (expr_avg_list%expr(i_exp)%name=='Psi_N') then
         allocate( plasma_profiles_ids%profiles_1d(i_slice)%grid%rho_pol_norm(n_grid) )
         plasma_profiles_ids%profiles_1d(i_slice)%grid%psi_magnetic_axis = ES%Psi_axis * fact_psi
         plasma_profiles_ids%profiles_1d(i_slice)%grid%psi_boundary      = ES%Psi_bnd  * fact_psi
@@ -1566,8 +1566,7 @@ module mod_jorek2IMAS
     equilibrium_ids%vacuum_toroidal_field%b0(i_slice) = F0/R_geo * fact_Ip
     
     ! --- Fill global quantities (call mod_integrals3D)
-    equilibrium_ids%time_slice(i_slice)%global_quantities%psi_axis        = ES%Psi_axis * fact_psi
-    equilibrium_ids%time_slice(i_slice)%global_quantities%psi_boundary    = ES%Psi_bnd  * fact_psi
+    equilibrium_ids%time_slice(i_slice)%global_quantities%psi_magnetic_axis = ES%Psi_axis * fact_psi
     equilibrium_ids%time_slice(i_slice)%global_quantities%magnetic_axis%r = ES%R_axis
     equilibrium_ids%time_slice(i_slice)%global_quantities%magnetic_axis%z = ES%Z_axis
     
