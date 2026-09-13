@@ -21,7 +21,7 @@ program jorek2_IDS
   
   implicit none
   
-  character(len=200):: user, database, passive_coil_geo_file, active_coil_geo_file, URI
+  character(len=1024):: user, database, passive_coil_geo_file, active_coil_geo_file, URI
   character(len=64) :: file_name, name_proj, dd_version_maj, backend, str_shot, str_run
   integer :: shot_number, run_number, i_begin, i_end, i_step, i_jump_steps, i_fmt
   integer :: ierr, idx, stat_mhd, stat_core, stat_rad, stat_eq, n_grid, stat, stat_wall, n_phi_PFC_wall=32
@@ -59,7 +59,7 @@ program jorek2_IDS
   type(t_PFC_triang_grid) :: PFC_wall_grid
   type(t_expr_list) :: expr_avg_list
 
-  namelist /imas_params/ shot_number, run_number, user, database, i_begin, i_end,    &
+  namelist /imas_params/ URI, shot_number, run_number, user, database, i_begin, i_end, &
                          export_JOREK_variables, export_radiation, export_1d_profiles, n_grid, &
                          export_equilibrium, rad_only_projections_h5, export_wall,   &
                          export_pf_passive, export_pf_active, passive_coil_geo_file, &
@@ -131,6 +131,7 @@ program jorek2_IDS
   ! ------------------ end initialization ------------------------
   
   ! --- Preset parameters for this program
+  URI         = ''                        !< Optional complete IMAS URI; overrides the fields below
   backend     = 'hdf5'                    !< Name of the backend to store the data (mdsplus,hdf5...)
   database    = 'test'                    !< Name of the database to export the results
   shot_number = 111112;   run_number=1;   
@@ -168,13 +169,15 @@ program jorek2_IDS
     close(42)
   end if
 
-  ! --- Compute URI (IMAS data path/identifier)
-  write(str_run,  '(I0)') run_number
-  write(str_shot, '(I0)') shot_number
-  write(dd_version_maj, '(I0)') al_dd_major_version
+  ! --- Use a URI supplied in the namelist in preference to its component fields.
+  if (len_trim(URI) == 0) then
+    write(str_run,  '(I0)') run_number
+    write(str_shot, '(I0)') shot_number
+    write(dd_version_maj, '(I0)') al_dd_major_version
 
-  URI = "imas:" // trim(backend) // "?user="     // trim(user)     // ";pulse="    // TRIM(str_shot)      // &
-        ";run=" // TRIM(str_run) // ";database=" // trim(database) // ";version=" //  TRIM(dd_version_maj)
+    URI = "imas:" // trim(backend) // "?user="     // trim(user)     // ";pulse="    // TRIM(str_shot)      // &
+          ";run=" // TRIM(str_run) // ";database=" // trim(database) // ";version=" //  TRIM(dd_version_maj)
+  endif
 
   write(*,*) ' Exporting to URI = '//trim(URI)
   new_entry = .true.

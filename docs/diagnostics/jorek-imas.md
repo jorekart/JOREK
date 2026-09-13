@@ -106,6 +106,10 @@ In the simulation directory containing the restart files, create `imas.nml`. The
 &imas_params
 
   ! --- Where is this simulation going to be stored?
+  URI         = ''                  ! optional complete URI; takes precedence over the fields below
+                                    ! For example: 'imas:hdf5?path=./imas_ids' stores the IDSs in a
+                                    ! separate folder below the directory from which jorek2_IDS is run.
+                                    ! With a path URI, user/database/shot/run are not used for locating data.
   user        = 'artolaj'           ! your username
   database    = 'test_database'     ! your local database, if it does not exist it will create a new one
   shot_number = 111111              ! choose a shot or reference number
