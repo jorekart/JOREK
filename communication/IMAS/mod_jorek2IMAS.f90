@@ -2875,6 +2875,9 @@ module mod_jorek2IMAS
     case('Ne')
       a_imp  = 20
       z_imp  = 10
+    case('O')
+      a_imp  = 16
+      z_imp  = 8
     case('Be')
         a_imp  = 9
         z_imp  = 4
