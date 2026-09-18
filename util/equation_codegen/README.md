@@ -39,3 +39,39 @@ source:
 The comparison is symbolic rather than textual. A mismatch raises an error
 that includes the source expression, generated expression, and their
 algebraic difference.
+
+## Model 600 reports
+
+The integrated model-600 checker validates the currently implemented `psi`,
+`u`, `zj`, and `w` rows and writes two line-aligned Markdown reports:
+
+```bash
+.venv/bin/python examples/check_model600_integrated.py
+meld reports/model600_fortran_terms.md reports/model600_generated_terms.md
+```
+
+The integrated script accepts the same selector, for example
+`--equation psi`; with no selector it exports all four rows.
+
+To generate only the reports, without running the pass/fail checks:
+
+```bash
+.venv/bin/python examples/export_model600_terms.py
+```
+
+For a faster report while developing one row, select it explicitly:
+
+```bash
+.venv/bin/python examples/export_model600_terms.py --equation psi
+```
+
+The available selections are `psi`, `u`, `zj`, and `w`. Repeat
+`--equation` to select more than one row. If no selection is supplied, all
+four rows are exported.
+
+Assignments and terms follow their order in
+`models/model600/mod_elt_matrix_fft.f90`. A source term that is not available
+from the equation generator has an empty line at the same position in the
+generated report. Generated-only terms are appended to their corresponding
+assignment block with an empty source line. NEO AMAT terms remain explicitly
+source-only until their symbolic linearization is enabled.
