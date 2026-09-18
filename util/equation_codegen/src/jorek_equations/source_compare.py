@@ -398,7 +398,7 @@ def compare_assignment_maps(
         messages.append("unexpected generated assignments: {}".format(", ".join(extra)))
     if messages:
         raise FortranComparisonError(
-            "Model-199 comparison failed:\n" + "\n".join(messages)
+            "Equation comparison failed:\n" + "\n".join(messages)
         )
 
 

@@ -1,7 +1,7 @@
 """Weak equation containers and JOREK sign transformations."""
 
 from dataclasses import dataclass
-from typing import Dict, Iterable
+from typing import Dict, Iterable, Mapping
 
 import sympy as sp
 
@@ -28,12 +28,21 @@ class EvolutionEquation:
     A: sp.Expr
     B: sp.Expr
     kind: str = "evolution"
+    # Optional field-specific residual expressions used when a legacy model
+    # defines a Jacobian tangent that intentionally differs from dB/dq.
+    amat_variation_overrides: Mapping[Field, sp.Expr] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.test, TestFunction):
             raise TypeError("test must be a TestFunction")
         object.__setattr__(self, "A", sp.sympify(self.A))
         object.__setattr__(self, "B", sp.sympify(self.B))
+        overrides = self.amat_variation_overrides or {}
+        object.__setattr__(
+            self,
+            "amat_variation_overrides",
+            {field: sp.sympify(expression) for field, expression in overrides.items()},
+        )
 
     def linearize(self, *, fields: Iterable[Field], timestep, theta, zeta):
         """Apply the model-199 evolution-equation sign convention."""
@@ -56,7 +65,11 @@ class EvolutionEquation:
                 * variation(self.A, value, direction=FieldRole.TRIAL)
                 - theta
                 * timestep
-                * variation(self.B, value, direction=FieldRole.TRIAL)
+                * variation(
+                    self.amat_variation_overrides.get(value, self.B),
+                    value,
+                    direction=FieldRole.TRIAL,
+                )
             )
             for value in fields
         }
