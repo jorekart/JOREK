@@ -97,7 +97,12 @@ class FortranPrinter(StrPrinter):
     def _derivative_parts(self, expr):
         if isinstance(expr, SpatialDerivative):
             base, suffix = self._derivative_parts(expr.expression)
-            return base, suffix + DERIVATIVE_SUFFIXES[expr.coordinate]
+            suffix += DERIVATIVE_SUFFIXES[expr.coordinate]
+            # JOREK writes mixed derivatives with poloidal derivatives first
+            # and toroidal derivatives last (``u_xpp``, not ``u_ppx``).
+            order = {"x": 0, "y": 1, "s": 2, "t": 3, "p": 4}
+            suffix = "".join(sorted(suffix, key=lambda item: order[item]))
+            return base, suffix
         return expr, ""
 
     def _print_Function(self, expr):

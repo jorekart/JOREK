@@ -65,6 +65,16 @@ For a faster report while developing one row, select it explicitly:
 .venv/bin/python examples/export_model600_terms.py --equation psi
 ```
 
+To inspect only the factored perpendicular-momentum RHS:
+
+```bash
+.venv/bin/python examples/export_model600_terms.py \
+  --equation u --assignment 'rhs_ij(var_u)'
+```
+
+This focused mode preserves the Fortran outer-term structure and does not
+build the expensive `u` AMAT columns.
+
 The available selections are `psi`, `u`, `zj`, and `w`. Repeat
 `--equation` to select more than one row. If no selection is supplied, all
 four rows are exported.

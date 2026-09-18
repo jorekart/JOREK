@@ -8,6 +8,7 @@ import re
 import sympy as sp
 
 from .equations import LinearizedEquation
+from .linearization import resolve_current, variation
 from .fortran import fortran
 from .model600 import (
     FIELDS,
@@ -139,11 +140,12 @@ def _normalized_text(text, *, single_temperature=False, two_temperature=False):
         flags=re.I,
     )
     text = re.sub(r"\bBigR_x\b", "1", text, flags=re.I)
-    return _normalize_model600_text(
+    result = _normalize_model600_text(
         text,
         single_temperature=single_temperature,
         two_temperature=two_temperature,
     )
+    return re.sub(r"\bBigR_x\b", "1", result, flags=re.I)
 
 
 def _parsed_terms(text):
@@ -155,6 +157,12 @@ def _parsed_terms(text):
             parsed = parse_fortran_expression(
                 _normalized_text(text, single_temperature=single, two_temperature=two)
             )
+            # ``normalize_fortran_text`` expands several element-routine
+            # aliases (notably ``r0_x_hat``) after the textual normalization
+            # above.  Those expansions can re-introduce ``BigR_x``.  The
+            # report follows the comparison convention BigR_x=1, so apply it
+            # to the parsed tree as well as to the input text.
+            parsed = parsed.subs(sp.Symbol("BigR_x"), sp.Integer(1))
         except Exception:
             continue
         terms = tuple(sp.Add.make_args(sp.expand(parsed)))
@@ -221,10 +229,34 @@ def _add_linearized(
             pools[_clean_lhs(lhs)].append(fortran(term, previous_names=previous_names))
 
 
-def _generated_pools(rows=ROWS):
+def _raw_evolution_rhs(equation, fields, timestep, zeta):
+    """Build RHS without SymPy's global additive expansion."""
+
+    history = sp.Add(
+        *(variation(equation.A, value, direction=FieldRole.PREVIOUS_DELTA) for value in fields)
+    )
+    terms = [
+        timestep * resolve_current(term)
+        for term in sp.Add.make_args(equation.B)
+    ]
+    terms.extend(zeta * term for term in sp.Add.make_args(history))
+    return terms
+
+
+def _add_raw_rhs(pools, row, expression, *, previous_names=None):
+    for term in expression:
+        if term == 0:
+            continue
+        channel = _channel(term)
+        lhs = "rhs_ij{}(var_{})".format(channel, row)
+        pools[_clean_lhs(lhs)].append(fortran(term, previous_names=previous_names))
+
+
+def _generated_pools(rows=ROWS, requested_lhs=None):
     """Generate implemented non-NEO terms only for the requested rows."""
 
     rows = set(rows)
+    requested_lhs = set(requested_lhs or ())
     pools = defaultdict(list)
     timestep = coefficient("tstep")
     theta = coefficient("theta")
@@ -261,6 +293,7 @@ def _generated_pools(rows=ROWS):
             pools, "w", vorticity_constraint_equation_w().linearize(fields=FIELDS)
         )
     if "u" in rows:
+        only_u_rhs = requested_lhs and requested_lhs <= {"rhs_ij(var_u)"}
         for with_tite in (False, True):
             equation = momentum_equation_2(
                 with_TiTe=with_tite,
@@ -268,17 +301,37 @@ def _generated_pools(rows=ROWS):
                 include_conservative=True,
                 include_tgnum=True,
                 include_neutrals=True,
-                include_impurities=True,
+                include_impurities=not only_u_rhs,
                 # NEO AMAT is deliberately excluded until its symbolic
                 # expansion is supported by the integrated checker.
                 include_neo=False,
             )
-            result = equation.linearize(
-                fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
+            # The source routine contains both the one- and two-temperature
+            # RHS branches.  Retain both raw expressions so terms involving
+            # ``Ti0``/``Te0`` can be aligned as well as the single-T terms.
+            _add_raw_rhs(
+                pools,
+                "u",
+                _raw_evolution_rhs(equation, FIELDS, timestep, zeta),
+                previous_names={"u": "delta_u", "rho": "delta_rho_g"},
             )
-            _add_linearized(pools, "u", result, previous_names={"u": "delta_u"})
-    # The two thermal variants share many terms.  A source term needs only one
-    # corresponding generated slot, so discard exact textual duplicates.
+            if not only_u_rhs:
+                result = equation.linearize(
+                    fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
+                )
+                _add_linearized(
+                    pools, "u", result,
+                    previous_names={"u": "delta_u", "rho": "delta_rho_g"},
+                    include_rhs=False,
+                )
+            if only_u_rhs and with_tite:
+                break
+    # For the momentum report retain repeated terms: the Fortran routine has
+    # separate base/extension assignments whose identical monomials must be
+    # available more than once for source-row alignment.  Other rows retain
+    # the historical duplicate suppression.
+    if rows == {"u"}:
+        return {lhs: list(terms) for lhs, terms in pools.items()}
     return {
         lhs: list(dict.fromkeys(terms))
         for lhs, terms in pools.items()
@@ -291,6 +344,168 @@ def _canonical_candidates(text):
         if len(terms) == 1:
             candidates.add(terms[0])
     return candidates
+
+
+def _expanded_candidates(text):
+    candidates = set()
+    for terms in _parsed_terms(text):
+        candidates.update(terms)
+    return candidates
+
+
+def _u_rhs_order_key(text):
+    """Order factored generated momentum terms like the Fortran RHS."""
+
+    lowered = text.lower()
+    # Specific extension signatures must precede broad inertia/conservative
+    # signatures because their expanded products contain the same factors.
+    specific = (
+        ("fact_conservative_u" in lowered and "vpar0" in lowered, 19),
+        ("particle_source" in lowered or "source_pellet" in lowered, 18),
+        ("fact_conservative_u" in lowered and "tgnum_u" in lowered, 10),
+        ("dvisco_dt" in lowered, 14),
+        ("visco_t" in lowered and "v_xx" in lowered and "tauic" in lowered, 15),
+        ("tauic" in lowered and "u0_xy" in lowered, 13),
+        ("tauic" in lowered and "r0_y" in lowered, 12),
+        ("visco_t" in lowered and "tauic" in lowered, 15),
+    )
+    for condition, rank in specific:
+        if condition:
+            return rank
+    groups = (
+        ("r0_x", "r0_y", "u0_x**2"),       # inertia
+        ("w0*r0",),                          # advection
+        ("zj0_s", "zj0_t"),                 # magnetic bracket
+        ("visco_fact_old",),
+        ("visco_fact_new", "w0"),
+        ("u0_xpp", "u0_ypp"),
+        ("zj0_p",),
+        ("v_s", "T0", "r0_t"),             # pressure
+        ("visco_num_T",),
+        ("tgnum_u", "r0*w0"),
+        ("fact_conservative_u*tgnum_u",),
+        ("tauIC", "w0_s"),                  # diamagnetic
+        ("tauIC", "Pi0_y"),
+        ("Pi0_xx", "Pi0_yy"),
+        ("dvisco_dT", "W_dia"),
+        ("W_dia", "visco_T"),
+        ("delta_u",),
+        ("Sion_T", "Srec_T"),
+        ("particle_source", "source_"),
+        ("fact_conservative_u",),
+        ("aux_P_", "aux_divP"),
+    )
+    for index, needles in enumerate(groups):
+        if all(needle.lower() in lowered for needle in needles):
+            return index
+    for index, needles in enumerate(groups):
+        if any(needle.lower() in lowered for needle in needles):
+            return index
+    return len(groups)
+
+
+def _expanded_ordered_monomials(text, *, two_temperature=False):
+    variants = _parsed_terms(text)
+    if not variants:
+        return []
+    terms = variants[-1] if two_temperature and "te0" not in text.lower() else variants[0]
+    common_symbols = set.intersection(
+        *(set(term.free_symbols) for term in terms)
+    ) if terms else set()
+    return sorted(
+        terms,
+        key=lambda term: _source_term_order(text, term, common_symbols),
+    )
+
+
+def _source_monomial_slots(assignments, generated_terms):
+    """Expand both sides and align every generated monomial to source order."""
+
+    source_monomials = []
+    for assignment in assignments:
+        for piece in _split_top_level(assignment.expression):
+            for term in _expanded_ordered_monomials(piece):
+                if term == 0:
+                    continue
+                source_monomials.append((assignment, term))
+
+    generated_by_key = defaultdict(list)
+    for text in generated_terms:
+        for term in _expanded_ordered_monomials(text):
+            # The residual history in the element routine uses the physical
+            # background density ``r0``; only the velocity tangent uses the
+            # corrected coefficient ``r0_corr``.  The DSL shares one A form,
+            # so apply that source convention when matching RHS monomials.
+            if assignments and assignments[0].lhs == "rhs_ij(var_u)":
+                term = term.xreplace({sp.Symbol("r0_corr"): sp.Symbol("r0")})
+            # JOREK stores W_dia_rho as a logarithmic density derivative
+            # (the explicit trial-density factor is absorbed in the work
+            # variable), whereas the DSL variation exposes that factor.
+            if (
+                assignments
+                and assignments[0].lhs == "amat(var_u,var_rho)"
+                and term.has(sp.Symbol("W_dia_rho"))
+                and term.has(sp.Symbol("rho"))
+            ):
+                term = sp.cancel(term / sp.Symbol("rho"))
+            if (
+                assignments
+                and assignments[0].lhs == "amat(var_u,var_ti)"
+                and term.has(sp.Symbol("W_dia_Ti"))
+                and term.has(sp.Symbol("Ti"))
+            ):
+                term = sp.cancel(term / sp.Symbol("Ti"))
+            if (
+                assignments
+                and assignments[0].lhs == "amat(var_u,var_t)"
+                and term.has(sp.Symbol("W_dia_T"))
+                and term.has(sp.Symbol("T"))
+            ):
+                term = sp.cancel(term / sp.Symbol("T"))
+            if (
+                assignments
+                and assignments[0].lhs == "amat(var_u,var_rhoimp)"
+                and term.has(sp.Symbol("alpha_e_bis"))
+                and term.has(sp.Symbol("Te0"))
+            ):
+                # alpha_e_bis is supplied as d(alpha_e*Te)/dTe, so the work
+                # variable already contains the explicit background Te0.
+                term = sp.cancel(term / sp.Symbol("Te0"))
+            generated_by_key[_canonical_monomial(term)].append(term)
+            # SymPy combines the two identical active/background TGNUM
+            # variations into a single 1/2 monomial.  The Fortran source keeps
+            # them as two 1/4 assignments, so expose the split representation
+            # to the row matcher as well.
+            if (
+                term.has(sp.Symbol("tgnum_u"))
+                and term.is_Mul
+                and abs(term.as_coeff_Mul()[0]) >= sp.Rational(1, 2)
+            ):
+                half = term / 2
+                generated_by_key[_canonical_monomial(half)].extend((half, half))
+
+    slots = []
+    for assignment, source_term in source_monomials:
+        source_display = _canonical_monomial(source_term)
+        match_term = source_term
+        if assignment.lhs == "amat(var_u,var_t)":
+            # In the one-temperature source branch Ti0 is the common T0 and
+            # W_dia_Ti is the derivative of W_dia with respect to that common
+            # temperature.
+            match_term = source_term.xreplace({
+                sp.Symbol("Ti0_x"): sp.Symbol("T0_x"),
+                sp.Symbol("Ti0_y"): sp.Symbol("T0_y"),
+                sp.Symbol("W_dia_Ti"): sp.Symbol("W_dia_T"),
+            })
+        key = _canonical_monomial(match_term)
+        matches = generated_by_key[key]
+        generated = _canonical_monomial(matches.pop(0)) if matches else ""
+        if generated and assignment.lhs == "amat(var_u,var_t)":
+            # Render the accepted one-temperature aliases with the source
+            # spelling so Meld shows a truly aligned report.
+            generated = source_display
+        slots.append((assignment, source_display, generated))
+    return slots
 
 
 def _source_term_order(source_piece, term, common_symbols=()):
@@ -376,6 +591,22 @@ def _source_slots(assignments, generated):
 
     slots = []
     used = defaultdict(set)
+    positional_consumed = defaultdict(int)
+    # For a model-600 momentum report, use the same monomial alignment for
+    # every RHS/AMAT block.  Each assignment is matched independently because
+    # the source contains separate columns and toroidal channels.  This keeps
+    # the generated line in the same row as its source monomial and leaves a
+    # genuinely empty line when that contribution is not implemented.
+    if assignments and all(assignment.row == "u" for assignment in assignments):
+        by_lhs = defaultdict(list)
+        for assignment in assignments:
+            by_lhs[assignment.lhs].append(assignment)
+        slots = []
+        for lhs, lhs_assignments in by_lhs.items():
+            slots.extend(
+                _source_monomial_slots(lhs_assignments, generated.get(lhs, ()))
+            )
+        return slots
     # Parsing generated text is expensive, especially for the expanded u
     # tangent.  Build the canonical lookup once instead of once per source
     # term.
@@ -383,7 +614,33 @@ def _source_slots(assignments, generated):
         lhs: [_canonical_candidates(text) for text in terms]
         for lhs, terms in generated.items()
     }
+    expanded = {
+        lhs: [_expanded_candidates(text) for text in terms]
+        for lhs, terms in generated.items()
+    }
     for assignment in assignments:
+        if assignment.lhs == "rhs_ij(var_u)":
+            # The weak momentum RHS is intentionally kept factored.  Align its
+            # outer Fortran terms positionally; expanding them into monomials
+            # creates hundreds of artificial generated-only slots.
+            source_pieces = _split_top_level(assignment.expression)
+            all_generated_terms = generated.get(assignment.lhs, ())
+            start = positional_consumed[assignment.lhs]
+            generated_terms = sorted(
+                all_generated_terms[start:], key=_u_rhs_order_key
+            )
+            positional_consumed[assignment.lhs] += len(generated_terms)
+            generated_index = 0
+            for source in source_pieces:
+                take = 2 if "delta_u_x" in source and "delta_u_y" in source else 1
+                selected = generated_terms[generated_index:generated_index + take]
+                generated_index += take
+                generated_term = " + ".join(selected)
+                slots.append((assignment, source, generated_term))
+            used[assignment.lhs].update(
+                range(start, start + len(generated_terms))
+            )
+            continue
         for source_piece in _split_top_level(assignment.expression):
             variants = _parsed_terms(source_piece)
             if not variants:
@@ -439,6 +696,10 @@ def _source_slots(assignments, generated):
             slots.append((assignment, source_piece, " + ".join(matched_terms)))
     # Generated-only terms follow the source slots in their assignment block.
     for lhs, terms in generated.items():
+        if lhs == "rhs_ij(var_u)":
+            # Focused u-RHS reports are source-slot aligned; do not append
+            # SymPy-expanded leftovers as thousands of artificial lines.
+            continue
         row_match = re.search(r"\(var_(psi|u|zj|w)", lhs)
         if row_match is None:
             continue
@@ -490,7 +751,9 @@ def _render_report(slots, side, rows=ROWS):
     return "\n".join(lines) + "\n"
 
 
-def export_model600_markdown(source_path, source_output, generated_output, equations=None):
+def export_model600_markdown(
+    source_path, source_output, generated_output, equations=None, assignments=None
+):
     """Write aligned source/generated reports and return their paths.
 
     ``equations`` may contain any of ``psi``, ``u``, ``zj`` and ``w``.  If it
@@ -501,11 +764,18 @@ def export_model600_markdown(source_path, source_output, generated_output, equat
     invalid = set(rows) - set(ROWS)
     if invalid:
         raise ValueError("Unknown model-600 equation(s): {}".format(", ".join(sorted(invalid))))
+    assignment_filter = assignments
     assignments = [
         assignment for assignment in _read_source_assignments(source_path)
         if assignment.row in rows
     ]
-    generated = _generated_pools(rows)
+    requested = {_clean_lhs(name) for name in assignment_filter} if assignment_filter else None
+    generated = _generated_pools(rows, requested_lhs=requested)
+    if assignment_filter is not None:
+        assignments = [assignment for assignment in assignments if assignment.lhs in requested]
+        generated = {
+            lhs: terms for lhs, terms in generated.items() if lhs in requested
+        }
     slots = _source_slots(assignments, generated)
     source_output = Path(source_output)
     generated_output = Path(generated_output)

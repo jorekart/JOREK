@@ -74,12 +74,61 @@ epsil = coefficient("epsil")
 alpha_e = coefficient("alpha_e")
 alpha_i = coefficient("alpha_i")
 alpha_imp = coefficient("alpha_imp")
+
+dvisco_state = external_function(
+    "dvisco_state600", arguments=("T",),
+    derivatives={"T": "d2visco_dT2"},
+    policy="piecewise_active", fortran_name="dvisco_dT",
+)
 Sion_T = coefficient("Sion_T")
 Srec_T = coefficient("Srec_T")
 particle_source = coefficient("particle_source")
 source_pellet = coefficient("source_pellet")
 source_bg_drift = coefficient("source_bg_drift")
 source_imp_drift = coefficient("source_imp_drift")
+aux_P_par_re = coefficient("aux_P_par_re")
+aux_P_perp_re = coefficient("aux_P_perp_re")
+aux_divPIR_perp = coefficient("aux_divPIR_perp")
+aux_divPIZ_perp = coefficient("aux_divPIZ_perp")
+
+# Neutral rates and electron fraction are state-dependent work variables in
+# model 600.  Declaring their interfaces lets the Newton generator produce the
+# ``dS*_dT`` and ``dalpha_e_dT`` AMAT terms instead of treating the rates as
+# frozen coefficients.
+Sion_rate = external_function(
+    "Sion_rate600", arguments=("T",), derivatives={"T": "dSion_dT"},
+    policy="piecewise_active", fortran_name="Sion_T",
+)
+Srec_rate = external_function(
+    "Srec_rate600", arguments=("T",), derivatives={"T": "dSrec_dT"},
+    policy="piecewise_active", fortran_name="Srec_T",
+)
+alpha_e_state = external_function(
+    "alpha_e600", arguments=("T",), derivatives={"T": "dalpha_e_dT"},
+    policy="piecewise_active", fortran_name="alpha_e",
+)
+
+# Charge-state coefficients used in the impurity pressure have their own
+# first/second temperature derivatives in the element routine (``bis`` and
+# ``tri``).  Register the derivative calls as external functions too, so a
+# second directional derivative remains well defined during AMAT generation.
+alpha_e_bis_state = external_function(
+    "alpha_e_bis", arguments=("T",), derivatives={"T": "alpha_e_tri"},
+    policy="piecewise_active", fortran_name="alpha_e_bis",
+)
+alpha_e_pressure = external_function(
+    "alpha_e_pressure600", arguments=("T",), derivatives={"T": "alpha_e_bis"},
+    policy="piecewise_active", fortran_name="alpha_e",
+)
+alpha_imp_bis_state = external_function(
+    "alpha_imp_bis", arguments=("T",), derivatives={"T": "alpha_imp_tri"},
+    policy="piecewise_active", fortran_name="alpha_imp_bis",
+)
+alpha_imp_pressure = external_function(
+    "alpha_imp_pressure600", arguments=("T",),
+    derivatives={"T": "alpha_imp_bis"},
+    policy="piecewise_active", fortran_name="alpha_imp",
+)
 
 # Density correction used by the model-600 resistive/pressure terms.  It is
 # active in the Newton tangent; the Fortran routine supplies both its value
@@ -91,6 +140,30 @@ corr_neg_dens = external_function(
     derivatives={"rho": "dr0_corr_dn"},
     policy="piecewise_active",
     fortran_name="corr_neg_dens",
+)
+
+# ``W_dia`` is assembled in the element routine and its state derivatives are
+# supplied as work variables.  Declare that interface explicitly instead of
+# expanding the long pressure-gradient definition inside every tangent.  This
+# keeps the generated weak form identical to the Fortran decomposition while
+# retaining the required derivatives for AMAT generation.
+W_dia_single = external_function(
+    "W_dia_single600",
+    arguments=("rho", "T"),
+    derivatives={"rho": "W_dia_rho", "T": "W_dia_T"},
+    policy="piecewise_active",
+    fortran_name="W_dia",
+)
+W_dia_two = external_function(
+    "W_dia_two600",
+    arguments=("rho", "Ti", "Te"),
+    derivatives={
+        "rho": "W_dia_rho",
+        "Ti": "W_dia_Ti",
+        "Te": "W_dia_Te",
+    },
+    policy="piecewise_active",
+    fortran_name="W_dia",
 )
 
 
@@ -192,19 +265,11 @@ def _diamagnetic_pressure(*, with_TiTe=False, include_impurities=False):
 
 
 def _diamagnetic_viscosity(*, with_TiTe=False, include_impurities=False):
-    """Return the model-600 ``W_dia`` coefficient."""
+    """Return the externally supplied model-600 ``W_dia`` coefficient."""
 
-    pressure = _diamagnetic_pressure(
-        with_TiTe=with_TiTe, include_impurities=include_impurities
-    )
-    corrected_rho = corr_neg_dens(rho)
-    px, py = dR(pressure), dZ(pressure)
-    pxx, pyy = dR(px), dZ(py)
-    return (
-        tauIC * 2 / corrected_rho * (pxx + px / R + pyy)
-        - tauIC * 2 / corrected_rho**2
-        * (dR(rho) * px + dZ(rho) * py)
-    )
+    if with_TiTe:
+        return W_dia_two(rho, Ti, Te)
+    return W_dia_single(rho, T)
 
 
 def momentum_equation_2(
@@ -219,6 +284,7 @@ def momentum_equation_2(
     include_neutrals=False,
     include_impurities=False,
     neutral_only=False,
+    include_auxiliary=True,
 ):
     """Return the unconditional model-600 perpendicular-momentum equation.
 
@@ -230,16 +296,27 @@ def momentum_equation_2(
 
     v = test_function("v")
     thermal = Te if with_TiTe else T
+    alpha_e_value = alpha_e_state(thermal)
+    sion_rate = Sion_rate(thermal)
+    srec_rate = Srec_rate(thermal)
     # In the two-temperature branch p0 is the sum of ion and electron
     # pressures; the single-temperature branch uses the unified T field.
     if with_TiTe:
         pressure = rho * (Ti + Te)
+        pressure_tangent = rho * (Ti + Te)
         if include_impurities:
-            pressure += rhoimp * (alpha_i * Ti + alpha_e * Te)
+            pressure += rhoimp * (
+                alpha_i * Ti + alpha_e_pressure(Te) * Te
+            )
+            pressure_tangent += rhoimp * (
+                alpha_i * Ti + alpha_e_pressure(Te)
+            )
     else:
         pressure = rho * T
+        pressure_tangent = pressure
         if include_impurities:
-            pressure += rhoimp * alpha_imp * T
+            pressure += rhoimp * alpha_imp_pressure(T) * T
+            pressure_tangent += rhoimp * alpha_imp_pressure(T)
     rho_hat = _rho_hat()
     grad_v = grad(v)
     grad_omega = grad(omega)
@@ -256,6 +333,7 @@ def momentum_equation_2(
     advection = -rho_hat * R**2 * omega * element_bracket(v, u)
     magnetic = v * element_bracket(psi, j) - v * F0 / R * dphi(j) * xjac
     pressure_term = R**2 * element_bracket(v, pressure)
+    pressure_tangent_term = R**2 * element_bracket(v, pressure_tangent)
     viscosity = (
         -visco(thermal) * R**3 * visco_fact_old
         * dot(grad_v, grad_omega) * xjac
@@ -266,6 +344,8 @@ def momentum_equation_2(
         -visco_num(thermal) * lap_v * lap_omega * xjac
     )
     B = inertia + advection + magnetic + pressure_term + viscosity
+    diamagnetic = sp.S.Zero
+    diamagnetic_viscosity = sp.S.Zero
     if neo_only:
         B = sp.S.Zero
     if neutral_only:
@@ -291,7 +371,7 @@ def momentum_equation_2(
             ) * xjac
         )
         diamagnetic_viscosity = (
-            dvisco_dT * R * W_dia
+            dvisco_state(thermal) * R * W_dia
             * dot(grad(Ti if with_TiTe else T), grad_v) * xjac
             + visco(thermal) * R * W_dia * lap_v * xjac
         )
@@ -315,8 +395,18 @@ def momentum_equation_2(
     if include_neutrals:
         source_contraction = dot(grad_v, grad(u)) * xjac
         neutral_sources = (
-            (rho + alpha_e * rhoimp) * rhon * Sion_T
-            - (rho + alpha_e * rhoimp) * (rho - rhoimp) * Srec_T
+            (rho + alpha_e_value * rhoimp) * rhon * sion_rate
+            - (rho + alpha_e_value * rhoimp) * (rho - rhoimp) * srec_rate
+        )
+    if include_auxiliary:
+        # Runaway/auxiliary pressure contributions are supplied as scalar
+        # work variables by JOREK and enter the weak form directly.
+        B += (
+            -R * v * (aux_P_par_re + aux_P_perp_re) * xjac
+            +R**2 * (
+                -aux_divPIR_perp * dZ(v)
+                +aux_divPIZ_perp * dR(v)
+            ) * xjac
         )
         B += (
             (1 - delta_n_convection) * R**3
@@ -327,14 +417,27 @@ def momentum_equation_2(
         )
     if include_tgnum:
         tstep = coefficient("tstep")
+        # The source splits each TGNUM product into one active and one
+        # background bracket.  Preserve that split explicitly: differentiating
+        # both brackets at once creates spurious products of two trial
+        # velocities and loses cross terms such as
+        # ``v_y*u0_x*u_y*w0_x``.
         velocity_cross = _poloidal_cross(v, u)
+        velocity_cross_background = _poloidal_cross(v, freeze(u))
         background_cross = _poloidal_cross(omega, u)
+        background_cross_background = _poloidal_cross(omega, freeze(u))
         rho_background_cross = _poloidal_cross(rho_hat, u)
+        rho_background_cross_background = _poloidal_cross(rho_hat, freeze(u))
         tgnum = (
             -tgnum_u * sp.Rational(1, 4) * rho_hat * R**3
-            * background_cross * velocity_cross * xjac * tstep
+            * background_cross * velocity_cross_background * xjac * tstep
+            -tgnum_u * sp.Rational(1, 4) * rho_hat * R**3
+            * background_cross_background * velocity_cross * xjac * tstep
             -tgnum_u * sp.Rational(1, 4) * omega * R**3
-            * rho_background_cross * velocity_cross * xjac * tstep
+            * rho_background_cross * velocity_cross_background * xjac * tstep
+            * fact_conservative_u
+            -tgnum_u * sp.Rational(1, 4) * omega * R**3
+            * rho_background_cross_background * velocity_cross * xjac * tstep
             * fact_conservative_u
         )
         B += tgnum
@@ -359,13 +462,39 @@ def momentum_equation_2(
             / (btheta2 + epsil)**2
             * dot(grad_psi, grad_v) * neo_force * R * xjac
         )
-    A = -R * _rho_hat(freeze(rho)) * dot(grad(v), grad(u)) * xjac
+    # The element routine uses the corrected density ``r0_corr`` in the
+    # velocity mass matrix.  Keep the correction evaluated at the current
+    # state, while freezing its density argument for the tangent; this gives
+    # the expected corrected-density coefficient in ``amat(var_u,var_u)``
+    # without introducing an artificial density derivative there.
+    A = -R * _rho_hat(corr_neg_dens(freeze(rho))) * dot(grad(v), grad(u)) * xjac
+    # Conservative momentum form contributes an additional mass-like term.
+    # It is part of A (and therefore carries the (1+zeta) factor in AMAT),
+    # rather than B; omitting it loses the ``rho`` and ``rho_corr`` terms in
+    # the u/u and u/rho blocks.
+    if include_conservative:
+        A += -fact_conservative_u * R**3 * rho * dot(grad(v), grad(u)) * xjac
+    # The legacy one-temperature element tangent uses the undoubled
+    # diamagnetic contribution for the temperature column, while the residual
+    # (and the other columns) retain the physical factor two.
+    overrides = {}
+    if include_impurities:
+        tangent_B = B - pressure_term + pressure_tangent_term
+        if with_TiTe:
+            overrides[Te] = tangent_B
+        else:
+            overrides[T] = tangent_B
+    if not with_TiTe and include_diamagnetic:
+        overrides[T] = overrides.get(T, B) - sp.Rational(1, 2) * (
+            diamagnetic
+        )
     return EvolutionEquation(
         "model600_momentum",
         v,
         A,
         B,
         kind="evolution",
+        amat_variation_overrides=overrides,
     )
 
 

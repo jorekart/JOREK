@@ -20,6 +20,11 @@ def main():
         action="append",
         help="export only this equation; repeat the option for multiple equations",
     )
+    parser.add_argument(
+        "--assignment",
+        action="append",
+        help="export only this assignment, e.g. 'rhs_ij(var_u)'; repeat to select more",
+    )
     args = parser.parse_args()
     reports = PROJECT_ROOT / "reports"
     source, generated = export_model600_markdown(
@@ -27,6 +32,7 @@ def main():
         reports / "model600_fortran_terms.md",
         reports / "model600_generated_terms.md",
         equations=args.equation,
+        assignments=args.assignment,
     )
     print("Wrote {}".format(source))
     print("Wrote {}".format(generated))

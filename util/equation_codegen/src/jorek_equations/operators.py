@@ -4,6 +4,8 @@ from typing import Sequence, Tuple
 
 import sympy as sp
 
+from .external import definition_for_call
+
 from .exceptions import InvalidDeclarationError
 from .symbols import Field, FieldValue, Frozen, TestFunction
 
@@ -154,6 +156,16 @@ def expand_derivatives(expression):
                 return inner.exp * inner.base ** (inner.exp - 1) * expand(
                     SpatialDerivative(inner.base, coordinate)
                 )
+            external = definition_for_call(inner)
+            if external is not None:
+                return sp.Add(*(
+                    external.derivative_call(argument_name, inner.args)
+                    * expand(SpatialDerivative(argument_value, coordinate))
+                    for argument_name, argument_value in zip(
+                        external.arguments, inner.args
+                    )
+                    if argument_name in external.derivatives
+                ))
             if inner in (R, Z, phi, s, t):
                 return sp.S.One if inner == coordinate else sp.S.Zero
             return SpatialDerivative(inner, coordinate)

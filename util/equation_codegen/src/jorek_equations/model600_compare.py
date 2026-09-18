@@ -618,6 +618,11 @@ def compare_model600_amat_psi_single_temperature(path):
 def _normalize_model600_text(
     expression, *, single_temperature=False, two_temperature=False
 ):
+    # The element routine uses short background-density names, whereas the
+    # symbolic model uses the descriptive field names.  They denote the same
+    # frozen quantities in the single-temperature momentum equation.
+    expression = re.sub(r"\brn0(?=\b|_)", "rhon0", expression, flags=re.I)
+    expression = re.sub(r"\brimp0(?=\b|_)", "rhoimp0", expression, flags=re.I)
     # Convert the physical-coordinate cross product used by the source to its
     # equivalent element-coordinate bracket before expanding aliases.
     expression = re.sub(
@@ -678,6 +683,19 @@ def _normalize_model600_text(
         "Pi0_s": "(r0_s*{}+r0*{}_s)".format(ion_temperature, ion_temperature),
         "Pi0_t": "(r0_t*{}+r0*{}_t)".format(ion_temperature, ion_temperature),
         "Pi0_y": "(r0_y*{}+r0*{}_y)".format(ion_temperature, ion_temperature),
+        # Cartesian derivatives used by the diamagnetic viscosity block.
+        # Keep these as explicit product rules so source and DSL expressions
+        # are expanded to the same monomials by the report matcher.
+        "Pi0_x": "(r0_x*{}+r0*{}_x)".format(ion_temperature, ion_temperature),
+        "Pi0_xx": "(r0_xx*{}+2*r0_x*{}_x+r0*{}_xx)".format(
+            ion_temperature, ion_temperature, ion_temperature
+        ),
+        "Pi0_yy": "(r0_yy*{}+2*r0_y*{}_y+r0*{}_yy)".format(
+            ion_temperature, ion_temperature, ion_temperature
+        ),
+        "Pi0_xy": "(r0_xy*{}+r0_x*{}_y+r0_y*{}_x+r0*{}_xy)".format(
+            ion_temperature, ion_temperature, ion_temperature, ion_temperature
+        ),
     }
     for name, replacement in aliases.items():
         expression = re.sub(r"\b{}\b".format(name), replacement, expression)
