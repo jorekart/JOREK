@@ -9,6 +9,7 @@ A block whose residual is zero contains the same physics in a different
 arrangement; a block with a non-zero residual is a real disagreement.
 """
 
+import collections
 from collections import Counter, OrderedDict
 from pathlib import Path
 import argparse
@@ -103,6 +104,52 @@ def to_physical(expression):
     return sp.expand(expression.xreplace(replacements))
 
 
+def check_alignment(source_path, generated_path, expected):
+    """Verify that blank report cells account for the multiset difference.
+
+    The reports are line aligned, so a blank generated cell marks a term the
+    element routine has and the generator does not.  There must be exactly as
+    many of them as the block has source-only monomials, and likewise on the
+    other side.  Any surplus is a pair the matcher failed to put on one line
+    although the report renders both the same way — a defect in the exporter
+    that the block verdicts cannot see, because the multiset difference is
+    computed from the file contents and cancels such a pair out.
+    """
+
+    source = Path(source_path).read_text(encoding="utf-8").splitlines()
+    generated = Path(generated_path).read_text(encoding="utf-8").splitlines()
+    section = None
+    key = None
+    seen = collections.Counter()
+    unpaired = collections.Counter()
+    for left, right in zip(source, generated):
+        if left.startswith("#") or left.startswith(">"):
+            if left.startswith("## ") and not left.startswith("### "):
+                section = left[3:].strip()
+            heading = re.match(r"^#### `(.*)`", left)
+            key = None
+            if heading:
+                name = heading.group(1)
+                key = (section, name, seen[(section, name)])
+                seen[(section, name)] += 1
+            continue
+        if key is None or not (left.strip() or right.strip()):
+            continue
+        if left.strip() and not right.strip():
+            unpaired[(key, "source")] += 1
+        elif right.strip() and not left.strip():
+            unpaired[(key, "generated")] += 1
+    surplus = collections.Counter()
+    for (key, side), count in unpaired.items():
+        # A negative difference means two terms that do differ were still
+        # placed on one line, by the coefficient or radius fallback.  That is
+        # the intent; only a surplus of blanks is a failure to pair.
+        extra = count - expected.get((key, side), 0)
+        if extra > 0:
+            surplus[(key, side)] = extra
+    return surplus
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     reports = PROJECT_ROOT / "reports"
@@ -115,12 +162,16 @@ def main():
 
     source = read_blocks(args.source)
     generated = read_blocks(args.generated)
+
     differing = 0
+    expected_blanks = {}
     keys = list(OrderedDict.fromkeys(list(source) + list(generated)))
     for key in keys:
         source_only = Counter(source.get(key, ())) - Counter(generated.get(key, ()))
         generated_only = Counter(generated.get(key, ())) - Counter(source.get(key, ()))
         label = "{} {} #{}".format(*key)
+        expected_blanks[(key, "source")] = sum(source_only.values())
+        expected_blanks[(key, "generated")] = sum(generated_only.values())
         if not source_only and not generated_only:
             print("OK   {}  ({} terms)".format(label, len(source.get(key, ()))))
             continue
@@ -192,6 +243,15 @@ def main():
             for term in sp.Add.make_args(shown):
                 print("     {}".format(term))
     print("\nBlocks with differences: {} / {}".format(differing, len(keys)))
+    misaligned = check_alignment(args.source, args.generated, expected_blanks)
+    if misaligned:
+        print("MISALIGNED: {} report line(s) left unpaired although both "
+              "reports contain the term:".format(sum(misaligned.values())))
+        for (block, side), count in misaligned.items():
+            print("   {} {} #{} ({} side): {}".format(*block, side, count))
+    else:
+        print("Alignment check: blank cells match the multiset difference in "
+              "every block.")
     return 1 if differing else 0
 
 

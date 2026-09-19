@@ -43,7 +43,7 @@ algebraic difference.
 ## Model 600 reports
 
 The integrated model-600 checker validates the currently implemented `psi`,
-`u`, `zj`, `w`, `rho`, `vpar`, `rhoimp` and `Ti` rows and writes two
+`u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`, `Ti` and `Te` rows and writes two
 line-aligned Markdown reports:
 
 ```bash
@@ -52,7 +52,7 @@ meld reports/model600_fortran_terms.md reports/model600_generated_terms.md
 ```
 
 The integrated script accepts the same selector, for example
-`--equation psi`; with no selector it exports all eight rows.
+`--equation psi`; with no selector it exports all nine rows.
 
 To generate only the reports, without running the pass/fail checks:
 
@@ -76,11 +76,11 @@ To inspect only the factored perpendicular-momentum RHS:
 This focused mode preserves the Fortran outer-term structure and does not
 build the expensive `u` AMAT columns.
 
-The available selections are `psi`, `u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`
-and `Ti`. Repeat `--equation` to select more than one row. If no selection is
-supplied, all eight rows are exported. `Ti` exists only in the
-two-temperature branch of the element routine, so it is exported into that
-section alone.
+The available selections are `psi`, `u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`,
+`Ti` and `Te`. Repeat `--equation` to select more than one row. If no
+selection is supplied, all nine rows are exported. `Ti` and `Te` exist only in
+the two-temperature branch of the element routine, so they are exported into
+that section alone.
 
 To compare the two reports block by block instead of line by line:
 
@@ -127,8 +127,8 @@ factor of one half by hand; that half is physical, not a legacy quirk.
 ## Known JOREK differences
 
 With the conventions above, every `psi`, `u`, `zj`, `w`, `rho`, `vpar`,
-`rhoimp` and `Ti` source term is reproduced by the generator, and 144 of the
-186 exported assignment blocks are identical. The remaining 42 are terms the generator produces and the element
+`rhoimp`, `Ti` and `Te` source term is reproduced by the generator, and 160 of
+the 209 exported assignment blocks are identical. The remaining 49 are terms the generator produces and the element
 routine does not, or coefficients that disagree. They are recorded, with their
 suggested Fortran fixes, in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
 
@@ -166,7 +166,16 @@ suggested Fortran fixes, in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
 12. three smaller omissions in the ion energy tangents: the `BB2` flux
     dependence of the kinetic-coupling term, the density derivative of the
     perpendicular conductivity in the toroidal channel, and the electron
-    temperature dependence of the recombination rate.
+    temperature dependence of the recombination rate;
+13. four ionization-energy tangent lines of `amat(var_Te,var_Te)` and
+    `amat_k(var_Te,var_Te)` are missing their `theta` factor, so those entries
+    are `1/theta` times too large;
+14. `amat(var_Te,var_Te)` uses `alpha_e` where `amat_k(var_Te,var_Te)` uses
+    `alpha_e_bis` for the same quantity, two lines apart;
+15. three omissions in the electron energy tangents: the `Te` dependence of
+    six ionization-energy terms, uncorrected densities in
+    `amat(var_Te,var_rhon)`, and three radiation/ionization derivatives in
+    `amat(var_Te,var_rhoimp)`.
 
 A source monomial and its generated counterpart are aligned on the same report
 line even when only their numeric coefficient or their power of `BigR` differs, so a term the element
@@ -182,6 +191,16 @@ The parallel-velocity equation is therefore generated in both spellings and
 each assignment is aligned against whichever one its own source block uses.
 A blank cell on the generated side of the report is then a genuinely missing
 term rather than a change of coordinates.
+
+Matching runs in three passes over a whole block — exact monomials first, then
+the ones that differ only by a coefficient, then the ones that also differ by
+a power of `BigR`. A single interleaved pass lets an early source monomial
+with no exact partner consume, through one of the relaxed keys, a generated
+monomial that a later source monomial matches exactly; the pair then drifts
+apart even though the block agrees. A fourth pass pairs terms that differ by the implicitness factor `theta` as
+well, since that is a scalar scaling like any other. `diff_model600_reports.py`
+checks the result: the blank cells of every block must account for its
+multiset difference, and any surplus is reported as `MISALIGNED`.
 
 Assignments and terms follow their order in
 `models/model600/mod_elt_matrix_fft.f90`. A source term that is not available

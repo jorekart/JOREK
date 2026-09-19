@@ -769,6 +769,33 @@ def _normalize_model600_text(
         expression, flags=re.I,
     )
     expression = re.sub(r"\bdTi_floor\b", "1", expression, flags=re.I)
+    expression = re.sub(
+        r"\bmin\s*\(\s*Te0\s*,\s*Tie_min_neg\s*\)", "Te0_floor",
+        expression, flags=re.I,
+    )
+    expression = re.sub(
+        r"\bexp\s*\(\s*\(\s*Te0_floor\s*-\s*Tie_min_neg\s*\)\s*/\s*"
+        r"\(\s*0\.5(?:d0)?\s*\*\s*Tie_min_neg\s*\)\s*\)",
+        "Te_floor_exp", expression, flags=re.I,
+    )
+    expression = re.sub(
+        r"\bdTe_floor_exp\b", "(Te_floor_exp/(0.5*Tie_min_neg))",
+        expression, flags=re.I,
+    )
+    expression = re.sub(r"\bdTe_floor\b", "1", expression, flags=re.I)
+    # Corrected neutral density, mirroring ``corr_neg_dens``.
+    # ``rn0`` was renamed to ``rhon0`` at the top of this function, so the
+    # corrected neutral density must be spelled the same way here; otherwise
+    # the matcher compares ``rn0_corr`` with ``rhon0_corr`` while the report
+    # displays both as ``rhon0_corr``.
+    expression = re.sub(
+        r"corr_neg_dens_n\(\s*rhon0?\s*\)", "rhon0_corr", expression,
+        flags=re.I,
+    )
+    expression = re.sub(
+        r"\bcorr_neg_dens_n\b", "rhon0_corr", expression, flags=re.I,
+    )
+    expression = re.sub(r"\bdrn0_corr_dn\b", "1", expression, flags=re.I)
     # Impurity negative-density correction, mirroring ``corr_neg_dens``.
     expression = re.sub(
         r"corr_neg_dens_imp\(\s*rhoimp0?\s*\)", "rhoimp0_corr",
@@ -787,6 +814,10 @@ def _normalize_model600_text(
     expression = re.sub(
         r"\bsqrt\s*\(([^()]*)\)", r"((\1)**(1/2))", expression, flags=re.I,
     )
+    # Fortran is case insensitive, and the routine spells the adiabatic index
+    # both ``GAMMA`` and ``gamma`` — sometimes in a residual and its own
+    # tangent.  Use one spelling.
+    expression = re.sub(r"\bgamma\b", "GAMMA", expression, flags=re.I)
     # Fortran is case insensitive; the density and parallel-velocity blocks
     # spell the parallel-velocity trial function ``Vpar`` while the DSL prints
     # ``vpar``.  ``Vpar0`` is covered by its own alias below.
@@ -809,6 +840,11 @@ def _normalize_model600_text(
         "Bgrad_Ti_psi": "((Ti0_x*psi_y-Ti0_y*psi_x)/BigR)",
         "Bgrad_Ti_Ti": "((Ti_x*ps0_y-Ti_y*ps0_x)/BigR)",
         "Bgrad_Ti_Ti_n": "(F0*Ti_p/BigR**2)",
+        # Electron-temperature parallel-gradient work values.
+        "Bgrad_Te": "((F0*Te0_p/BigR+Te0_x*ps0_y-Te0_y*ps0_x)/BigR)",
+        "Bgrad_Te_psi": "((Te0_x*psi_y-Te0_y*psi_x)/BigR)",
+        "Bgrad_Te_Te": "((Te_x*ps0_y-Te_y*ps0_x)/BigR)",
+        "Bgrad_Te_Te_n": "(F0*Te_p/BigR**2)",
         "Bgrad_vpar": "((F0*vpar0_p/BigR+vpar0_x*ps0_y-vpar0_y*ps0_x)/BigR)",
         "Bgrad_vpar_psi": "((vpar0_x*psi_y-vpar0_y*psi_x)/BigR)",
         "Bgrad_vpar_vpar": "((vpar_x*ps0_y-vpar_y*ps0_x)/BigR)",

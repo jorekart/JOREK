@@ -14,6 +14,7 @@ from .model600 import (
     FIELDS,
     density_equation_rho,
     impurity_density_equation_rhoimp,
+    electron_energy_equation_Te,
     ion_energy_equation_Ti,
     parallel_velocity_equation_vpar,
     T,
@@ -34,14 +35,14 @@ from .source_compare import parse_fortran_expression
 from .symbols import FieldRole, FieldValue, TestFunction, coefficient
 
 
-ROWS = ("psi", "u", "zj", "w", "rho", "vpar", "rhoimp", "ti")
+ROWS = ("psi", "u", "zj", "w", "rho", "vpar", "rhoimp", "ti", "te")
 FIELD_NAMES = {
     field: name
     for field, name in zip(FIELDS, ("psi", "u", "zj", "w", "rho", "T", "vpar", "Ti", "Te", "rhon", "rhoimp"))
 }
 ASSIGNMENT_RE = re.compile(
     r"(?P<lhs>(?:rhs_ij(?:_k)?|amat(?:_n|_k|_kn|_nn)?)\s*\(\s*"
-    r"var_(?P<row>psi|u|zj|w|rho|rhoimp|vpar|Ti)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
+    r"var_(?P<row>psi|u|zj|w|rho|rhoimp|vpar|Ti|Te)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
     re.I,
 )
 
@@ -391,6 +392,21 @@ def _generated_pools(
                 "rhoimp": "delta_g(mp,var_rhoimp,ms,mt)",
             },
         )
+    if "te" in rows and with_tite:
+        equation = electron_energy_equation_Te(
+            element_brackets=element_brackets,
+        )
+        _add_linearized(
+            pools, "te",
+            equation.linearize(
+                fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
+            ),
+            previous_names={
+                "Te": "delta_g(mp,var_Te,ms,mt)",
+                "rho": "delta_rho_g",
+                "rhoimp": "delta_g(mp,var_rhoimp,ms,mt)",
+            },
+        )
     if "zj" in rows:
         _add_linearized(
             pools, "zj", current_constraint_equation_zj().linearize(fields=FIELDS)
@@ -548,6 +564,24 @@ def _geometric_structure(term):
         return structure
 
 
+def _scaling_structure(term):
+    """Monomial structure with every scalar scaling factor removed.
+
+    On top of the cylindrical radius this drops the implicitness factor
+    ``theta``.  Both are pure scalings of an otherwise identical term, so a
+    pair that differs only in them belongs on one report line; that is how a
+    tangent written without its ``theta`` becomes visible in Meld.
+    """
+
+    structure = _geometric_structure(term)
+    theta = sp.Symbol("theta")
+    exponent = sp.degree(sp.together(structure).as_numer_denom()[0], theta)
+    try:
+        return sp.cancel(structure / theta**exponent)
+    except Exception:
+        return structure
+
+
 def _combine_source_duplicates(source_monomials, generated_by_key):
     """Sum source monomials the generated side reports only once.
 
@@ -668,6 +702,7 @@ def _source_monomial_slots(assignments, generated_terms, *, temperature_model=No
     generated_by_key = defaultdict(list)
     generated_by_structure = defaultdict(list)
     generated_by_radius = defaultdict(list)
+    generated_by_scaling = defaultdict(list)
     # For a source NEO block, keep only generated NEO terms in this local
     # alignment.  The complete generated pool also contains the ordinary
     # momentum terms, which must not appear as unrelated generated-only rows
@@ -727,6 +762,7 @@ def _source_monomial_slots(assignments, generated_terms, *, temperature_model=No
             generated_by_key[_canonical_monomial(term)].append(term)
             generated_by_structure[_monomial_structure(term)].append(term)
             generated_by_radius[_geometric_structure(term)].append(term)
+            generated_by_scaling[_scaling_structure(term)].append(term)
 
     source_monomials = _combine_source_duplicates(
         source_monomials, generated_by_key
@@ -743,26 +779,37 @@ def _source_monomial_slots(assignments, generated_terms, *, temperature_model=No
             return term
         return None
 
-    slots = []
+    # Match in three passes rather than term by term.  A single pass lets an
+    # early source monomial with no exact partner consume, through one of the
+    # relaxed keys, a generated monomial that a later source monomial matches
+    # exactly; the pair then drifts apart in the report even though the block
+    # agrees.  Exact matches are therefore all resolved first, then the ones
+    # that differ only by a coefficient, then the ones that differ by a power
+    # of the cylindrical radius as well.
     consumed = set()
+    entries = []
     for assignment, source_term, source_raw in source_monomials:
         if source_term is None:
-            slots.append((assignment, source_raw, ""))
+            entries.append([assignment, source_raw, "", None])
             continue
-        source_display = _canonical_monomial(source_term)
-        match = _take(generated_by_key, source_display)
-        if match is None:
-            # No monomial with this exact coefficient.  Fall back to the same
-            # monomial structure, so that a term the element routine scales
-            # differently is shown on the same report line as its generated
-            # counterpart instead of drifting to the end of the block.
-            match = _take(generated_by_structure, _monomial_structure(source_term))
-        if match is None:
-            # Still nothing: accept a partner that differs by a power of the
-            # cylindrical radius as well.
-            match = _take(generated_by_radius, _geometric_structure(source_term))
-        generated = _canonical_monomial(match) if match is not None else ""
-        slots.append((assignment, source_display, generated))
+        entries.append([
+            assignment, _canonical_monomial(source_term), "", source_term,
+        ])
+    for pool, key_of in (
+        (generated_by_key, _canonical_monomial),
+        (generated_by_structure, _monomial_structure),
+        (generated_by_radius, _geometric_structure),
+        (generated_by_scaling, _scaling_structure),
+    ):
+        for entry in entries:
+            source_term = entry[3]
+            if source_term is None or entry[2]:
+                continue
+            match = _take(pool, key_of(source_term))
+            if match is not None:
+                entry[2] = _canonical_monomial(match)
+    slots = [(assignment, source, generated)
+             for assignment, source, generated, _ in entries]
 
     # Do not hide generated-only terms.  They are emitted after the aligned
     # source rows with an empty source column, which makes sign or convention
@@ -796,7 +843,7 @@ def _unmatched_generated_blocks(rows, source_lhs, generated, temperature_model):
     for lhs, terms in generated.items():
         if lhs in source_lhs or not terms:
             continue
-        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar|ti)\b", lhs)
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar|ti|te)\b", lhs)
         if row_match is None or row_match.group(1) not in rows:
             continue
         synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")
@@ -1118,7 +1165,7 @@ def _source_slots(assignments, generated, *, temperature_model=None,
             # Focused u-RHS reports are source-slot aligned; do not append
             # SymPy-expanded leftovers as thousands of artificial lines.
             continue
-        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar|ti)\b", lhs)
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar|ti|te)\b", lhs)
         if row_match is None:
             continue
         synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")
@@ -1204,12 +1251,12 @@ def export_model600_markdown(
             with_tite=with_tite,
         )
         generated_alternative = {}
-        if "vpar" in rows or "ti" in rows:
+        if {"vpar", "ti", "te"} & set(rows):
             # The parallel-velocity row is the one whose source assignments
             # disagree among themselves about how to spell a poloidal
             # bracket, so build the other spelling as well.
             alternative_rows = tuple(
-                row for row in ("vpar", "ti") if row in rows
+                row for row in ("vpar", "ti", "te") if row in rows
             )
             alternative_pools = _generated_pools(
                 alternative_rows, requested_lhs=requested,

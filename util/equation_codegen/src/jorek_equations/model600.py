@@ -1037,3 +1037,221 @@ def ion_energy_equation_Ti(
         )
     A = v * corrected_ion_density * Ti * R * xjac
     return EvolutionEquation("model600_ion_energy", v, A, B)
+
+
+# ---------------------------------------------------------------------------
+# Electron energy equation (``var_Te``)
+# ---------------------------------------------------------------------------
+
+heat_source_e = coefficient("heat_source_e")
+ZK_e_perp_num_psin = coefficient("ZK_e_perp_num_psin")
+tgnum_Te = coefficient("tgnum_Te")
+ksi_ion_norm = coefficient("ksi_ion_norm")
+aux_jre = coefficient("aux_jre")
+aux_E0_Te = coefficient("aux_E0_Te")
+power_dens_teleport_ju = coefficient("power_dens_teleport_ju")
+# Background-species ionization potential energy.  It is a scalar work value
+# at the quadrature point, so it is spatially constant: declaring it as an
+# argument-free frozen external keeps it outside the poloidal brackets it
+# multiplies, exactly as the element routine writes it.
+E_ion_bg_state = external_function(
+    "E_ion_bg600", arguments=(), derivatives={}, policy="frozen",
+    fortran_name="E_ion_bg",
+)
+
+ZKe_par = external_function(
+    "ZKe_par600", arguments=("Te",), derivatives={"Te": "dZKe_par_dT"},
+    policy="piecewise_active", fortran_name="ZKe_par_T",
+)
+ZKe_perp = external_function(
+    "ZKe_prof600", arguments=("rho",), derivatives={"rho": "dZKe_prof_drho"},
+    policy="piecewise_active", fortran_name="ZKe_prof",
+)
+# Ohmic resistivity of the electron energy equation; its density and impurity
+# derivatives come from the Z_eff dependence.
+eta_ohm_e = external_function(
+    "eta_ohm600", arguments=("Te", "rho", "rhoimp"),
+    derivatives={
+        "Te": "deta_dT_ohm", "rho": "deta_dr0_ohm",
+        "rhoimp": "deta_drimp0_ohm",
+    },
+    policy="piecewise_active", fortran_name="eta_T_ohm",
+)
+# Ionization potential energy per impurity particle.  The element routine
+# supplies its first temperature derivative but no second one, so
+# ``dE_ion_dT`` is registered as a frozen quantity: it carries neither a
+# spatial derivative nor a tangent, which is the convention the assembled
+# Jacobian uses.
+dE_ion_dT_state = external_function(
+    "dE_ion_dT", arguments=("Te",), derivatives={}, policy="frozen",
+)
+E_ion_state = external_function(
+    "E_ion600", arguments=("Te",), derivatives={"Te": "dE_ion_dT"},
+    policy="piecewise_active", fortran_name="E_ion",
+)
+# Radiation channels, all evaluated at the electron temperature.
+LradDrays = external_function(
+    "LradDrays600", arguments=("Te",), derivatives={"Te": "dLradDrays_dT"},
+    policy="piecewise_active", fortran_name="LradDrays_T",
+)
+LradDcont = external_function(
+    "LradDcont600", arguments=("Te",),
+    derivatives={"Te": "dLradDcont_dT_corr"},
+    policy="piecewise_active", fortran_name="LradDcont_corr",
+)
+frad_bg_state = external_function(
+    "frad_bg600", arguments=("Te",), derivatives={"Te": "dfrad_bg_dT"},
+    policy="piecewise_active", fortran_name="frad_bg",
+)
+Lrad_state = external_function(
+    "Lrad600", arguments=("Te",), derivatives={"Te": "dLrad_dT"},
+    policy="piecewise_active", fortran_name="Lrad",
+)
+Te_i_exchange = external_function(
+    "dTe_i600", arguments=("Ti", "Te", "rho", "rhoimp"),
+    derivatives={
+        "Ti": "ddTe_i_dTi", "Te": "ddTe_i_dTe",
+        "rho": "ddTe_i_drho", "rhoimp": "ddTe_i_drhoimp",
+    },
+    policy="piecewise_active", fortran_name="dTe_i",
+)
+Te_floor = external_function(
+    "Te_floor600", arguments=("Te",), derivatives={"Te": "dTe_floor"},
+    policy="piecewise_active", fortran_name="Te0_floor",
+)
+Te_floor_exp = external_function(
+    "Te_floor_exp600", arguments=("Te",),
+    derivatives={"Te": "dTe_floor_exp"},
+    policy="piecewise_active", fortran_name="Te_floor_exp",
+)
+corr_neg_dens_n = external_function(
+    "corr_neg_dens_n", arguments=("rhon",),
+    derivatives={"rhon": "drn0_corr_dn"},
+    policy="piecewise_active", fortran_name="corr_neg_dens_n",
+)
+
+
+def electron_energy_equation_Te(
+    *,
+    element_brackets=True,
+    include_impurities=True,
+    include_parallel_velocity=True,
+    include_tgnum=True,
+    include_neutrals=True,
+    include_radiation=True,
+    include_auxiliary=True,
+):
+    """Return the model-600 electron energy equation for ``var_Te``.
+
+    The electron pressure follows ``construct_pressure``:
+    ``Pe = rho*Te + rhoimp*alpha_e(Te)*Te``, so a gradient of it carries
+    ``alpha_e`` on the density part and ``alpha_e_bis`` on the temperature
+    part, exactly as the element routine spells it out term by term.
+
+    ``element_brackets`` applies to the electron-pressure advection only.  The
+    ionization-energy advection is always written in element coordinates,
+    including in ``amat(var_Te,var_u)`` where the pressure bracket right above
+    it uses physical coordinates.
+    """
+
+    v = test_function("v")
+    alpha_e = alpha_e_state(Te)
+    electron_pressure = rho * Te
+    corrected_pressure = corr_neg_dens(rho) * Te
+    electron_density = rho
+    corrected_density = corr_neg_dens(rho)
+    if include_impurities:
+        electron_pressure += rhoimp * alpha_e_temperature(Te)
+        corrected_pressure += corr_neg_dens_imp(rhoimp) * alpha_e_temperature(Te)
+        electron_density += alpha_e * rhoimp
+        corrected_density += alpha_e * corr_neg_dens_imp(rhoimp)
+    bb2 = _parallel_norm(psi)
+    conduction_excess = ZKe_par(Te) - ZKe_perp(rho)
+    advection_bracket = element_bracket if element_brackets else (
+        lambda left, right: xjac * _poloidal_cross(left, right)
+    )
+    parallel_flow = element_bracket(vpar, psi) + F0 / R * dphi(vpar) * xjac
+
+    B = (
+        v * R * heat_source_e * xjac
+        + v * R**2 * advection_bracket(electron_pressure, u)
+        + 2 * GAMMA * v * R * electron_pressure * dZ(u) * xjac
+        - conduction_excess * R / bb2
+        * _b_dot_grad(v) * _b_dot_grad(Te) * xjac
+        - ZKe_perp(rho) * R * _perpendicular_diffusion(v, Te) * xjac
+        - ZK_e_perp_num_psin * _laplacian(v) * _laplacian(Te) * R * xjac
+        # Ohmic heating.
+        + v * (GAMMA - 1) * eta_ohm_e(Te, rho, rhoimp)
+        * ((j - aux_jre) / R)**2 * R * xjac
+        # Ion-electron energy exchange and the implicit heating floor.
+        + v * R * Te_i_exchange(Ti, Te, rho, rhoimp) * xjac
+        + implicit_heat_source * (gamma - 1) * v * R * xjac * (
+            sp.Rational(1, 2) * Tie_min_neg * (1 + Te_floor_exp(Te))
+            - Te_floor(Te)
+        )
+    )
+    if include_parallel_velocity:
+        B += (
+            -v * F0 / R * vpar * dphi(electron_pressure) * xjac
+            - v * vpar * element_bracket(electron_pressure, psi)
+            - GAMMA * v * electron_pressure * parallel_flow
+        )
+    if include_tgnum:
+        timestep = coefficient("tstep")
+        B += (
+            -tgnum_Te * sp.Rational(1, 4) * R**3
+            * _poloidal_cross(electron_pressure, u) * _poloidal_cross(v, u)
+            * xjac * timestep
+            - tgnum_Te * sp.Rational(1, 4) * R * vpar**2
+            * _b_dot_grad(electron_pressure) * _b_dot_grad(v)
+            * xjac * timestep
+        )
+    if include_neutrals:
+        B += -v * R * ksi_ion_norm * electron_density * rhon * Sion_rate(Te) * xjac
+    if include_radiation:
+        B += (
+            -v * R * corrected_density * corr_neg_dens_n(rhon) * LradDrays(Te) * xjac
+            - v * R * corrected_density
+            * (corr_neg_dens(rho) - corr_neg_dens_imp(rhoimp))
+            * LradDcont(Te) * xjac
+            - v * R * corrected_density * frad_bg_state(Te) * xjac
+            - v * R * corrected_density * corr_neg_dens_imp(rhoimp)
+            * Lrad_state(Te) * xjac
+        )
+    if include_auxiliary:
+        B += (
+            v * R * power_dens_teleport_ju * xjac
+            + v * R * aux_E0_Te * xjac
+        )
+    A = v * corrected_pressure * R * xjac
+    if include_impurities:
+        # Ionization potential energy carried by the impurity and the
+        # background species.
+        ionization_energy = (
+            E_ion_state(Te) * rhoimp + E_ion_bg_state() * (rho - rhoimp)
+        )
+        d_par_excess = D_par_local + D_par_sc_num * tau_sc - D_prof
+        d_par_excess_imp = (
+            D_par_local_imp + D_par_imp_sc_num * tau_sc - D_prof_imp
+        )
+        # The ionization-energy advection keeps the element spelling even in
+        # ``amat(var_Te,var_u)``, where the electron-pressure advection two
+        # lines above is written in physical coordinates.
+        B += (GAMMA - 1) * (
+            v * R**2 * element_bracket(ionization_energy, u)
+            + 2 * v * R * ionization_energy * dZ(u) * xjac
+            - v * F0 / R * vpar * dphi(ionization_energy) * xjac
+            - v * vpar * element_bracket(ionization_energy, psi)
+            - v * ionization_energy * parallel_flow
+            # Diffusive flux of the ionization potential energy.
+            - E_ion_state(Te) * d_par_excess_imp * R / bb2
+            * _b_dot_grad(v) * _b_dot_grad(rhoimp) * xjac
+            - E_ion_state(Te) * D_prof_imp * R
+            * _perpendicular_diffusion(v, rhoimp) * xjac
+            - E_ion_bg_state() * d_par_excess * R / bb2
+            * _b_dot_grad(v) * _b_dot_grad(rho - rhoimp) * xjac
+            - E_ion_bg_state() * D_prof * R
+            * _perpendicular_diffusion(v, rho - rhoimp) * xjac
+        )
+        A += (GAMMA - 1) * v * ionization_energy * R * xjac
+    return EvolutionEquation("model600_electron_energy", v, A, B)

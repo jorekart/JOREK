@@ -64,3 +64,21 @@ def assignment_list(assignment):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MatchingOrderTest(unittest.TestCase):
+    """Exact matches must be resolved before the relaxed ones."""
+
+    def test_exact_match_is_not_stolen_by_a_relaxed_one(self):
+        # ``2*a*b`` has no exact partner and would, in a single pass, consume
+        # ``a*b`` through the coefficient fallback, leaving the source line
+        # that matches ``a*b`` exactly with an empty cell.
+        assignment = SourceAssignment(
+            "amat(var_u,var_u)", "u", 1, "2*a*b + a*b",
+        )
+        slots = _source_monomial_slots([assignment], ["a*b", "3*a*b"])
+        rendered = [(source, generated) for _, source, generated in slots]
+        self.assertEqual(len(rendered), 2)
+        self.assertIn(("a*b", "a*b"), rendered)
+        self.assertIn(("2*a*b", "3*a*b"), rendered)
+        self.assertTrue(all(source and generated for source, generated in rendered))
