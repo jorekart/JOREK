@@ -16,6 +16,7 @@ from .model600 import (
     impurity_density_equation_rhoimp,
     electron_energy_equation_Te,
     ion_energy_equation_Ti,
+    total_energy_equation_T,
     parallel_velocity_equation_vpar,
     T,
     Te,
@@ -35,14 +36,14 @@ from .source_compare import parse_fortran_expression
 from .symbols import FieldRole, FieldValue, TestFunction, coefficient
 
 
-ROWS = ("psi", "u", "zj", "w", "rho", "vpar", "rhoimp", "ti", "te")
+ROWS = ("psi", "u", "zj", "w", "rho", "vpar", "rhoimp", "ti", "te", "t")
 FIELD_NAMES = {
     field: name
     for field, name in zip(FIELDS, ("psi", "u", "zj", "w", "rho", "T", "vpar", "Ti", "Te", "rhon", "rhoimp"))
 }
 ASSIGNMENT_RE = re.compile(
     r"(?P<lhs>(?:rhs_ij(?:_k)?|amat(?:_n|_k|_kn|_nn)?)\s*\(\s*"
-    r"var_(?P<row>psi|u|zj|w|rho|rhoimp|vpar|Ti|Te)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
+    r"var_(?P<row>psi|u|zj|w|rho|rhoimp|vpar|Ti|Te|T)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
     re.I,
 )
 
@@ -403,6 +404,20 @@ def _generated_pools(
             ),
             previous_names={
                 "Te": "delta_g(mp,var_Te,ms,mt)",
+                "rho": "delta_rho_g",
+                "rhoimp": "delta_g(mp,var_rhoimp,ms,mt)",
+            },
+        )
+    # The single-temperature energy equation exists only in the other branch.
+    if "t" in rows and not with_tite:
+        equation = total_energy_equation_T(element_brackets=element_brackets)
+        _add_linearized(
+            pools, "t",
+            equation.linearize(
+                fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
+            ),
+            previous_names={
+                "T": "delta_g(mp,var_T,ms,mt)",
                 "rho": "delta_rho_g",
                 "rhoimp": "delta_g(mp,var_rhoimp,ms,mt)",
             },
@@ -843,7 +858,7 @@ def _unmatched_generated_blocks(rows, source_lhs, generated, temperature_model):
     for lhs, terms in generated.items():
         if lhs in source_lhs or not terms:
             continue
-        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar|ti|te)\b", lhs)
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar|ti|te|t)\b", lhs)
         if row_match is None or row_match.group(1) not in rows:
             continue
         synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")
@@ -1165,7 +1180,7 @@ def _source_slots(assignments, generated, *, temperature_model=None,
             # Focused u-RHS reports are source-slot aligned; do not append
             # SymPy-expanded leftovers as thousands of artificial lines.
             continue
-        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar|ti|te)\b", lhs)
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar|ti|te|t)\b", lhs)
         if row_match is None:
             continue
         synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")
@@ -1251,12 +1266,12 @@ def export_model600_markdown(
             with_tite=with_tite,
         )
         generated_alternative = {}
-        if {"vpar", "ti", "te"} & set(rows):
+        if {"vpar", "ti", "te", "t"} & set(rows):
             # The parallel-velocity row is the one whose source assignments
             # disagree among themselves about how to spell a poloidal
             # bracket, so build the other spelling as well.
             alternative_rows = tuple(
-                row for row in ("vpar", "ti", "te") if row in rows
+                row for row in ("vpar", "ti", "te", "t") if row in rows
             )
             alternative_pools = _generated_pools(
                 alternative_rows, requested_lhs=requested,

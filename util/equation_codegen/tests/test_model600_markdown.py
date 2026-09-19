@@ -26,7 +26,7 @@ class Model600MarkdownTest(unittest.TestCase):
         self.assertEqual(generated[source.index("a")], "")
 
     def test_supported_equation_rows_are_explicit(self):
-        self.assertEqual(ROWS, ("psi", "u", "zj", "w", "rho", "vpar", "rhoimp", "ti", "te"))
+        self.assertEqual(ROWS, ("psi", "u", "zj", "w", "rho", "vpar", "rhoimp", "ti", "te", "t"))
 
     def test_factor_order_is_shared_between_source_and_generated_forms(self):
         self.assertEqual(

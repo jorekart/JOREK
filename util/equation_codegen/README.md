@@ -43,8 +43,8 @@ algebraic difference.
 ## Model 600 reports
 
 The integrated model-600 checker validates the currently implemented `psi`,
-`u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`, `Ti` and `Te` rows and writes two
-line-aligned Markdown reports:
+`u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`, `Ti`, `Te` and `T` rows and writes
+two line-aligned Markdown reports:
 
 ```bash
 .venv/bin/python examples/check_model600_integrated.py
@@ -52,7 +52,7 @@ meld reports/model600_fortran_terms.md reports/model600_generated_terms.md
 ```
 
 The integrated script accepts the same selector, for example
-`--equation psi`; with no selector it exports all nine rows.
+`--equation psi`; with no selector it exports all ten rows.
 
 To generate only the reports, without running the pass/fail checks:
 
@@ -77,10 +77,10 @@ This focused mode preserves the Fortran outer-term structure and does not
 build the expensive `u` AMAT columns.
 
 The available selections are `psi`, `u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`,
-`Ti` and `Te`. Repeat `--equation` to select more than one row. If no
-selection is supplied, all nine rows are exported. `Ti` and `Te` exist only in
-the two-temperature branch of the element routine, so they are exported into
-that section alone.
+`Ti`, `Te` and `T`. Repeat `--equation` to select more than one row. If no
+selection is supplied, all ten rows are exported. `Ti` and `Te` exist only in
+the two-temperature branch of the element routine and `T` only in the other
+one, so each is exported into its own section.
 
 To compare the two reports block by block instead of line by line:
 
@@ -126,9 +126,10 @@ factor of one half by hand; that half is physical, not a legacy quirk.
 
 ## Known JOREK differences
 
-With the conventions above, every `psi`, `u`, `zj`, `w`, `rho`, `vpar`,
-`rhoimp`, `Ti` and `Te` source term is reproduced by the generator, and 160 of
-the 209 exported assignment blocks are identical. The remaining 49 are terms the generator produces and the element
+With the conventions above, all nine rows — `psi`, `u`, `zj`, `w`, `rho`,
+`vpar`, `rhoimp`, `Ti`, `Te` and `T` — are reproduced by the generator, and
+174 of the 233 exported assignment blocks are identical. The remaining 59 are
+terms the generator produces and the element
 routine does not, or coefficients that disagree. They are recorded, with their
 suggested Fortran fixes, in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
 
@@ -172,10 +173,15 @@ suggested Fortran fixes, in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
     are `1/theta` times too large;
 14. `amat(var_Te,var_Te)` uses `alpha_e` where `amat_k(var_Te,var_Te)` uses
     `alpha_e_bis` for the same quantity, two lines apart;
-15. three omissions in the electron energy tangents: the `Te` dependence of
-    six ionization-energy terms, uncorrected densities in
-    `amat(var_Te,var_rhon)`, and three radiation/ionization derivatives in
-    `amat(var_Te,var_rhoimp)`.
+15. four omissions in the electron and total energy tangents: the temperature
+    dependence of six ionization-energy terms, uncorrected densities in
+    `amat(var_Te,var_rhon)`, three radiation/ionization derivatives in
+    `amat(var_Te,var_rhoimp)`, and `alpha_e` in the friction sources;
+16. `rhs_ij(var_T)` convects the pressure with the *neutral* density `rn0`
+    where every analogous line uses `rimp0` — the second finding that affects
+    the converged solution;
+17. `amat_n(var_T,var_vpar)` drops the impurity part of the pressure that both
+    two-temperature equations keep.
 
 A source monomial and its generated counterpart are aligned on the same report
 line even when only their numeric coefficient or their power of `BigR` differs, so a term the element

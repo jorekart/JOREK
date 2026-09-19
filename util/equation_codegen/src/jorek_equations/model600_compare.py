@@ -783,6 +783,20 @@ def _normalize_model600_text(
         expression, flags=re.I,
     )
     expression = re.sub(r"\bdTe_floor\b", "1", expression, flags=re.I)
+    expression = re.sub(
+        r"\bmin\s*\(\s*T0\s*,\s*T_min_neg\s*\)", "T0_floor",
+        expression, flags=re.I,
+    )
+    expression = re.sub(
+        r"\bexp\s*\(\s*\(\s*T0_floor\s*-\s*T_min_neg\s*\)\s*/\s*"
+        r"\(\s*0\.5(?:d0)?\s*\*\s*T_min_neg\s*\)\s*\)",
+        "T_floor_exp", expression, flags=re.I,
+    )
+    expression = re.sub(
+        r"\bdT_floor_exp\b", "(T_floor_exp/(0.5*T_min_neg))",
+        expression, flags=re.I,
+    )
+    expression = re.sub(r"\bdT_floor\b", "1", expression, flags=re.I)
     # Corrected neutral density, mirroring ``corr_neg_dens``.
     # ``rn0`` was renamed to ``rhon0`` at the top of this function, so the
     # corrected neutral density must be spelled the same way here; otherwise
@@ -835,6 +849,11 @@ def _normalize_model600_text(
         "Bgrad_rhoimp_rhoimp": "((rhoimp_x*ps0_y-rhoimp_y*ps0_x)/BigR)",
         "Bgrad_rhoimp_rhoimp_n": "(F0*rhoimp_p/BigR**2)",
         # Parallel-velocity work values.
+        # Single-temperature parallel-gradient work values.  ``Bgrad_T`` is
+        # already defined by ``normalize_fortran_text``; only the tangents
+        # are needed here.
+        "Bgrad_T_T": "((T_x*ps0_y-T_y*ps0_x)/BigR)",
+        "Bgrad_T_T_n": "(F0*T_p/BigR**2)",
         # Ion-temperature parallel-gradient work values.
         "Bgrad_Ti": "((F0*Ti0_p/BigR+Ti0_x*ps0_y-Ti0_y*ps0_x)/BigR)",
         "Bgrad_Ti_psi": "((Ti0_x*psi_y-Ti0_y*psi_x)/BigR)",

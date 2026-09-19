@@ -1255,3 +1255,176 @@ def electron_energy_equation_Te(
         )
         A += (GAMMA - 1) * v * ionization_energy * R * xjac
     return EvolutionEquation("model600_electron_energy", v, A, B)
+
+
+# ---------------------------------------------------------------------------
+# Total (single-temperature) energy equation (``var_T``)
+# ---------------------------------------------------------------------------
+
+heat_source_total = coefficient("heat_source")
+ZK_perp_num_psin = coefficient("ZK_perp_num_psin")
+tgnum_T = coefficient("tgnum_T")
+T_min_neg = coefficient("T_min_neg")
+aux_E0 = coefficient("aux_E0")
+
+ZK_par = external_function(
+    "ZK_par600", arguments=("T",), derivatives={"T": "dZK_par_dT"},
+    policy="piecewise_active", fortran_name="ZK_par_T",
+)
+ZK_perp = external_function(
+    "ZK_prof600", arguments=("rho",), derivatives={"rho": "dZK_prof_drho"},
+    policy="piecewise_active", fortran_name="ZK_prof",
+)
+T_floor = external_function(
+    "T_floor600", arguments=("T",), derivatives={"T": "dT_floor"},
+    policy="piecewise_active", fortran_name="T0_floor",
+)
+T_floor_exp = external_function(
+    "T_floor_exp600", arguments=("T",), derivatives={"T": "dT_floor_exp"},
+    policy="piecewise_active", fortran_name="T_floor_exp",
+)
+
+
+def total_energy_equation_T(
+    *,
+    element_brackets=True,
+    include_impurities=True,
+    include_parallel_velocity=True,
+    include_tgnum=True,
+    include_neutrals=True,
+    include_radiation=True,
+    include_friction=True,
+    include_heating=True,
+    include_auxiliary=True,
+):
+    """Return the model-600 single-temperature energy equation for ``var_T``.
+
+    It carries the ion and the electron contributions at once: the advection
+    and conduction of the total pressure, the friction and viscous-heating
+    terms of the ion equation, and the Ohmic, radiation and ionization-energy
+    terms of the electron equation.  The total pressure follows the same
+    convention as the two-temperature ones,
+    ``P = rho*T + rhoimp*alpha_imp(T)*T``, so a gradient of it carries
+    ``alpha_imp`` on the density part and ``alpha_imp_bis`` on the
+    temperature part.
+    """
+
+    v = test_function("v")
+    alpha_e = alpha_e_state(T)
+    pressure = rho * T
+    corrected_pressure = corr_neg_dens(rho) * T
+    electron_density = rho
+    corrected_density = corr_neg_dens(rho)
+    if include_impurities:
+        pressure += rhoimp * alpha_imp_temperature(T)
+        corrected_pressure += corr_neg_dens_imp(rhoimp) * alpha_imp_temperature(T)
+        electron_density += alpha_e * rhoimp
+        corrected_density += alpha_e * corr_neg_dens_imp(rhoimp)
+    bb2 = _parallel_norm(psi)
+    conduction_excess = ZK_par(T) - ZK_perp(rho)
+    advection_bracket = element_bracket if element_brackets else (
+        lambda left, right: xjac * _poloidal_cross(left, right)
+    )
+    parallel_flow = element_bracket(vpar, psi) + F0 / R * dphi(vpar) * xjac
+
+    B = (
+        v * R * heat_source_total * xjac
+        + v * R**2 * advection_bracket(pressure, u)
+        + 2 * GAMMA * v * R * pressure * dZ(u) * xjac
+        - conduction_excess * R / bb2
+        * _b_dot_grad(v) * _b_dot_grad(T) * xjac
+        - ZK_perp(rho) * R * _perpendicular_diffusion(v, T) * xjac
+        - ZK_perp_num_psin * _laplacian(v) * _laplacian(T) * R * xjac
+        + v * (GAMMA - 1) * eta_ohm_e(T, rho, rhoimp)
+        * ((j - aux_jre) / R)**2 * R * xjac
+        + implicit_heat_source * (gamma - 1) * v * R * xjac * (
+            sp.Rational(1, 2) * T_min_neg * (1 + T_floor_exp(T)) - T_floor(T)
+        )
+        - (GAMMA - 1) * v * sp.Rational(1, 2) * T * R
+        * corr_neg_dens(rho)**2 * Srec_rate(T) * xjac
+    )
+    if include_parallel_velocity:
+        B += (
+            -v * F0 / R * vpar * dphi(pressure) * xjac
+            - v * vpar * element_bracket(pressure, psi)
+            - GAMMA * v * pressure * parallel_flow
+        )
+    if include_tgnum:
+        timestep = coefficient("tstep")
+        B += (
+            -tgnum_T * sp.Rational(1, 4) * R**3
+            * _poloidal_cross(pressure, u) * _poloidal_cross(v, u)
+            * xjac * timestep
+            - tgnum_T * sp.Rational(1, 4) * R * vpar**2
+            * _b_dot_grad(pressure) * _b_dot_grad(v) * xjac * timestep
+        )
+    if include_friction:
+        released = (
+            electron_density * rhon * Sion_rate(T)
+            + particle_source + source_pellet
+            + source_bg_drift + source_imp_drift
+        )
+        B += (
+            v * R * (GAMMA - 1) / 2
+            * (vpar**2 * bb2 + _velocity_norm(u)) * released * xjac
+        )
+    if include_heating:
+        grad_vpar = grad(vpar)
+        B += (GAMMA - 1) * R * visco_par_heating * xjac * (
+            v * dot(grad_vpar, grad_vpar) + vpar * dot(grad(v), grad_vpar)
+        )
+        heating = visco_heating(T)
+        B += (
+            -(GAMMA - 1) * v * heating * R**3 * visco_fact_old
+            * dot(grad(u), grad(omega)) * xjac
+            - (GAMMA - 1) * v * heating * 2 * R**2 * visco_fact_new
+            * omega * dR(u) * xjac
+            - (GAMMA - 1) * v * heating * R * visco_fact_new
+            * (dR(u) * dR(dphi(dphi(u))) + dZ(u) * dZ(dphi(dphi(u)))) * xjac
+        )
+    if include_neutrals:
+        B += -v * R * ksi_ion_norm * electron_density * rhon * Sion_rate(T) * xjac
+    if include_radiation:
+        B += (
+            -v * R * corrected_density * corr_neg_dens_n(rhon) * LradDrays(T) * xjac
+            - v * R * corrected_density
+            * (corr_neg_dens(rho) - corr_neg_dens_imp(rhoimp))
+            * LradDcont(T) * xjac
+            - v * R * corrected_density * frad_bg_state(T) * xjac
+            - v * R * corrected_density * corr_neg_dens_imp(rhoimp)
+            * Lrad_state(T) * xjac
+        )
+    if include_auxiliary:
+        B += (
+            v * R * power_dens_teleport_ju * xjac
+            + v * R * aux_E0 * xjac
+            + (gamma - 1) * sp.Rational(1, 2) * v * aux_rho0
+            * vpar**2 * bb2 * R * xjac
+            - (gamma - 1) * v * aux_mom_par0 * vpar * R * xjac
+        )
+    A = v * corrected_pressure * R * xjac
+    if include_impurities:
+        ionization_energy = (
+            E_ion_state(T) * rhoimp + E_ion_bg_state() * (rho - rhoimp)
+        )
+        d_par_excess = D_par_local + D_par_sc_num * tau_sc - D_prof
+        d_par_excess_imp = (
+            D_par_local_imp + D_par_imp_sc_num * tau_sc - D_prof_imp
+        )
+        B += (GAMMA - 1) * (
+            v * R**2 * element_bracket(ionization_energy, u)
+            + 2 * v * R * ionization_energy * dZ(u) * xjac
+            - v * F0 / R * vpar * dphi(ionization_energy) * xjac
+            - v * vpar * element_bracket(ionization_energy, psi)
+            - v * ionization_energy * parallel_flow
+            - E_ion_state(T) * d_par_excess_imp * R / bb2
+            * _b_dot_grad(v) * _b_dot_grad(rhoimp) * xjac
+            - E_ion_state(T) * D_prof_imp * R
+            * _perpendicular_diffusion(v, rhoimp) * xjac
+            - E_ion_bg_state() * d_par_excess * R / bb2
+            * _b_dot_grad(v) * _b_dot_grad(rho - rhoimp) * xjac
+            - E_ion_bg_state() * D_prof * R
+            * _perpendicular_diffusion(v, rho - rhoimp) * xjac
+        )
+        A += (GAMMA - 1) * v * ionization_energy * R * xjac
+    return EvolutionEquation("model600_total_energy", v, A, B)

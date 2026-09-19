@@ -19,8 +19,8 @@ rewriting every `_s`/`_t` derivative through the chain rule, because the
 element routine spells the same poloidal bracket sometimes as
 `a_s*b_t - a_t*b_s` and sometimes as `xjac*(a_x*b_y - a_y*b_x)` — even between
 a residual and its own tangent.  A block whose two sides differ only by that
-rewrite is reported as `SAME`. At the time of writing, 160 of the
-209 exported blocks are identical; the remaining 49 are the fifteen findings
+rewrite is reported as `SAME`. At the time of writing, 174 of the
+233 exported blocks are identical; the remaining 59 are the seventeen findings
 below. Nothing in this list has been fixed in the Fortran.
 
 Status of the five exported rows:
@@ -36,14 +36,17 @@ Status of the five exported rows:
 | `rhoimp` | finding 10 | reproduced |
 | `Ti` | reproduced | findings 11 and 12 |
 | `Te` | reproduced | findings 11, 12, 13, 14 and 15 |
+| `T` | finding 16 | findings 11, 12, 13, 14, 15 and 17 |
 
 Every source term of every row is reproduced by the generator. Apart from
 findings 3, 6 and 9, the differences are all terms the generator produces and
 the element routine does not.
 
-Findings 3, 6, 9, 10, 11, 13 and 14 are disagreements about a coefficient, a
-power of `BigR`, a sign or a missing `theta` rather than omissions, and
-finding 10 is the only one that sits in a residual rather than in a tangent.
+Findings 3, 6, 9, 10, 11, 13, 14 and 16 are disagreements about a
+coefficient, a power of `BigR`, a sign, a missing `theta` or a wrong variable
+rather than omissions.  Findings 10 and 16 are the only two that sit in a
+residual rather than in a tangent, so they are the only two that change the
+converged solution.
 
 The NEO branch is excluded from the default reports (`--include-neo` enables
 it) and has not been audited here.
@@ -560,7 +563,8 @@ makes the impurity Jacobian inconsistent with its own residual.
 
 **Where:** `amat(var_Ti,var_u)`, `amat(var_Ti,var_rho)`, `amat(var_Ti,var_Ti)`
 and `amat(var_Ti,var_rhoimp)`, and the same four columns of the electron
-energy equation with `tgnum_Te`.
+energy equation with `tgnum_Te` and of the single-temperature one with
+`tgnum_T`.
 
 **What happens:** the first Taylor-Galerkin term of the ion energy residual
 carries `BigR**3`,
@@ -595,11 +599,12 @@ poloidal-velocity tangent terms of the four blocks listed above.
 
 **Scale:** 24 monomials in `amat(var_Ti,var_u)`, 16 in `amat(var_Ti,var_Ti)`,
 8 in `amat(var_Ti,var_rho)` and 8 in `amat(var_Ti,var_rhoimp)`; 24, 20, 8 and
-8 in the corresponding `var_Te` blocks.
+8 in the corresponding `var_Te` blocks; 36, 28, 8 and 16 in the `var_T`
+blocks.
 
 ---
 
-## Finding 12 — three smaller omissions in the ion energy tangents
+## Finding 12 — three smaller omissions in the energy tangents
 
 All three are terms the generator produces and `mod_elt_matrix_fft.f90` does
 not.
@@ -619,7 +624,8 @@ but the residual carries one more term of exactly the same shape,
 + (gamma-1.d0)*0.5d0 * v * aux_rho0 * vpar0**2 * BB2 * BigR * xjac * tstep * factor(var_Ti,16) &
 ```
 
-whose `BB2_psi` contribution is absent. 4 monomials.
+whose `BB2_psi` contribution is absent. 4 monomials, and 4 more in
+`amat(var_T,var_psi)`, which repeats the omission.
 
 **(b) The perpendicular conductivity's density derivative is missing from the
 toroidal channel.** `amat(var_Ti,var_rho)` carries both
@@ -635,7 +641,8 @@ contributions. `ZKi_prof` depends on the density
 (`ZKi_prof = get_zk_iperp(psi_norm) * max(r0,zkperp_density_floor)`), so the
 `k` channel needs the same two terms. 4 monomials. The electron energy
 equation repeats this exactly: `dZKe_prof_drho` is in `amat(var_Te,var_rho)`
-and missing from `amat_k(var_Te,var_rho)`, another 4 monomials.
+and missing from `amat_k(var_Te,var_rho)`, and `dZK_prof_drho` likewise from
+`amat_k(var_T,var_rho)` — another 4 monomials each.
 
 **(c) The recombination sink does not differentiate its rate.** The residual
 ends with
@@ -658,8 +665,10 @@ uses `dSrec_dT` for the same rate — but `amat(var_Ti,var_Te)` carries only the
 
 ## Finding 13 — four ionization-energy tangent lines are missing their theta factor
 
-**Where:** `amat(var_Te,var_Te)` and `amat_k(var_Te,var_Te)`, the diffusive
-flux of the impurity ionization potential energy.
+**Where:** `amat(var_Te,var_Te)` and `amat_k(var_Te,var_Te)`, and the same
+two blocks of the single-temperature equation, `amat(var_T,var_T)` and
+`amat_k(var_T,var_T)` — the diffusive flux of the impurity ionization
+potential energy.
 
 **What happens:** every contribution to an `amat` block in this routine is
 scaled by `theta * tstep`, the implicitness factor of the time scheme. These
@@ -685,13 +694,15 @@ entries are `1/theta` times too large.
 
 **Suggested fix:** insert `* theta` on the four lines.
 
-**Scale:** 60 monomials.
+**Scale:** 60 monomials in the two-temperature branch and 60 in the
+single-temperature one.
 
 ---
 
 ## Finding 14 — amat(var_Te,var_Te) contradicts amat_k(var_Te,var_Te) over alpha_e
 
-**Where:** the `tgnum_Te` bracket of `amat(var_Te,var_Te)`.
+**Where:** the `tgnum_Te` bracket of `amat(var_Te,var_Te)`, and the
+`tgnum_T` bracket of `amat_k(var_T,var_psi)`.
 
 **What happens:** the two blocks differentiate the same quantity and write its
 toroidal part differently, two lines apart:
@@ -715,13 +726,28 @@ direction `a`, because `alpha_e_bis = alpha_e + dalpha_e_dT*Te0`; the
 poloidal parts of both blocks already use `alpha_e_bis`, and only the
 toroidal part of the first disagrees.
 
-**Suggested fix:** `alpha_e -> alpha_e_bis` in that one bracket.
+The single-temperature equation has the mirror image of the same slip, with
+the roles of the two channels swapped:
 
-**Scale:** 2 monomials.
+```fortran
+! amat(var_T,var_psi)   -- correct
+* (r0+alpha_imp_bis*rimp0) * (T0_x * psi_y - T0_y * psi_x) &
+! amat_k(var_T,var_psi) -- alpha_imp where the residual uses alpha_imp_bis
+* (r0+alpha_imp    *rimp0) * (T0_x * psi_y - T0_y * psi_x) &
+```
+
+The bracket multiplies a temperature gradient, so `alpha_imp_bis` is right;
+the residual at `rhs_ij(var_T)` and the `p` channel of the same tangent both
+use it.
+
+**Suggested fix:** `alpha_e -> alpha_e_bis` in the first bracket and
+`alpha_imp -> alpha_imp_bis` in the second.
+
+**Scale:** 2 monomials each.
 
 ---
 
-## Finding 15 — three omissions in the electron energy tangents
+## Finding 15 — four omissions in the electron and total energy tangents
 
 **(a) The ionization-energy terms that do not already carry `dE_ion_dT` are
 not differentiated with respect to Te.** `amat(var_Te,var_Te)` differentiates
@@ -738,7 +764,8 @@ density gradient, the compression or the parallel flow:
 - (GAMMA-1.) * v * E_ion * rimp0 * F0 / BigR * vpar0_p                    * xjac * tstep * factor(var_Te,17)&
 ```
 
-Each needs its `E_ion -> dE_ion_dT*Te` copy. 18 monomials.
+Each needs its `E_ion -> dE_ion_dT*Te` copy. 18 monomials, and 18 more in
+`amat(var_T,var_T)`, which repeats the omission.
 
 Note that the element routine supplies no second derivative of `E_ion`, so the
 generator follows its convention and treats `dE_ion_dT` as frozen; the
@@ -766,41 +793,108 @@ derivatives.** The impurity density enters the electron density as
 `LradDcont` channels. The block carries the `Lrad` and `frad_bg` derivatives
 but not those three. 5 monomials.
 
+**(d) The friction sources do not differentiate `alpha_e`.** The released
+kinetic energy carries the electron density `(r0+alpha_e*rimp0)`, and
+`amat(var_T,var_T)` differentiates `Sion_T` in it but not `alpha_e`, while
+the ionization sink two lines above does differentiate both. The impurity
+column repeats the omission. 10 monomials in `amat(var_T,var_T)` and 11 in
+`amat(var_T,var_rhoimp)`.
+
+---
+
+## Finding 16 — the single-temperature parallel convection uses the neutral density
+
+**Where:** `rhs_ij(var_T)`, the parallel convection of the total pressure.
+
+**What happens:** the poloidal half of the parallel pressure convection is
+written with `rn0`, the neutral density, where every analogous line uses
+`rimp0`:
+
+```fortran
+! rhs_ij(var_T), line ~2013
+- v * (r0 + rn0  *alpha_imp_bis) * Vpar0 * (T0_s  * ps0_t - T0_t  * ps0_s) * tstep * factor(var_T,4 ) &
+
+! the toroidal half of the same term, one line above
+- v * (r0 + rimp0*alpha_imp_bis) * F0 / BigR * Vpar0 * T0_p         * xjac * tstep * factor(var_T,4 ) &
+
+! the same line in the two-temperature equations
+- v * (r0 + rimp0*alpha_i)     * Vpar0 * (Ti0_s * ps0_t - Ti0_t * ps0_s)   * tstep * factor(var_Ti,4) &
+- v * (r0 + rimp0*alpha_e_bis) * Vpar0 * (Te0_s * ps0_t - Te0_t * ps0_s)   * tstep * factor(var_Te,4) &
+```
+
+`alpha_imp_bis` is the impurity closure coefficient, so pairing it with the
+neutral density has no physical reading; the toroidal half of the very same
+term, and both two-temperature equations, use `rimp0`.
+
+**Suggested fix:** `rn0 -> rimp0`.
+
+**Effect:** this is in the residual, so like finding 10 it changes the
+converged solution, not only the Newton convergence — whenever neutrals and
+impurities are both present and their densities differ.
+
+**Scale:** 4 monomials.
+
+---
+
+## Finding 17 — amat_n(var_T,var_vpar) drops the impurity pressure
+
+**Where:** `amat_n(var_T,var_vpar)`.
+
+**What happens:** the residual convects the full pressure along the field,
+
+```fortran
+- v * (r0 + rimp0*alpha_imp) * T0 * GAMMA * F0 / BigR * vpar0_p * xjac * tstep * factor(var_T,3 ) &
+```
+
+but its toroidal parallel-velocity tangent keeps only the main-ion part:
+
+```fortran
+amat_n(var_T,var_vpar) = + v * r0 * GAMMA * T0 * F0 / BigR * vpar_p * xjac * theta * tstep &
+```
+
+Both two-temperature equations get this right —
+`amat_n(var_Ti,var_vpar)` uses `(r0+rimp0*alpha_i)` and
+`amat_n(var_Te,var_vpar)` uses `(r0+rimp0*alpha_e)` — which is what makes the
+single-temperature one a slip rather than a convention.
+
+**Suggested fix:** `r0 -> (r0 + rimp0*alpha_imp)`.
+
+**Scale:** 2 monomials.
+
 ---
 
 ## Complete inventory
 
-Every report line that is blank on one side, across all 209 blocks, belongs to
-one of the findings above. There is nothing unexplained left.
+Every report line that is blank on one side, across all 233 blocks, belongs to
+one of the findings above.  There is nothing unexplained left.
 
 | Finding | Report lines | Blocks |
 |---:|---:|---|
-| 1 — impurity ion pressure in the diamagnetic tangents | 96 | `amat(var_u,var_T)` 22, `amat(var_u,var_Ti)` 22, `amat(var_u,var_rhoimp)` 44, `amat(var_rho,var_T)` 2, `amat(var_rho,var_Ti)` 2, `amat(var_rho,var_rhoimp)` 4 |
-| 2 — impurity electron pressure in the induction tangents | 30 | `amat(var_psi,var_T)` 8, `amat(var_psi,var_Te)` 8, `amat(var_psi,var_rhoimp)` 10, `amat_n(var_psi,var_T)` 1, `amat_n(var_psi,var_Te)` 1, `amat_n(var_psi,var_rhoimp)` 2 |
+| 1 — impurity ion pressure in the diamagnetic tangents | 96 | `amat(var_rho,var_rhoimp)` 4, `amat(var_rho,var_t)` 2, `amat(var_rho,var_ti)` 2, `amat(var_u,var_rhoimp)` 44, `amat(var_u,var_t)` 22, `amat(var_u,var_ti)` 22 |
+| 2 — impurity electron pressure in the induction tangents | 30 | `amat(var_psi,var_rhoimp)` 10, `amat(var_psi,var_t)` 8, `amat(var_psi,var_te)` 8, `amat_n(var_psi,var_rhoimp)` 2, `amat_n(var_psi,var_t)` 1, `amat_n(var_psi,var_te)` 1 |
 | 4 — pinch not differentiated with respect to psi | 24 | `amat(var_rho,var_psi)` 12, `amat(var_vpar,var_psi)` 12 |
-| 5 — alpha_e(T) in the density sources | 6 | `amat(var_rho,var_T)` 3, `amat(var_rho,var_Te)` 3 |
-| 6 — parallel-velocity time term | 36 | `rhs_ij(var_vpar)` 12, `amat(var_vpar,var_psi)` 8, `amat(var_vpar,var_rho)` 8, `amat(var_vpar,var_vpar)` 8 |
+| 5 — alpha_e(T) in the density sources | 6 | `amat(var_rho,var_t)` 3, `amat(var_rho,var_te)` 3 |
+| 6 — parallel-velocity time term | 36 | `amat(var_vpar,var_psi)` 8, `amat(var_vpar,var_rho)` 8, `amat(var_vpar,var_vpar)` 8, `rhs_ij(var_vpar)` 12 |
 | 7 — BB2 in the tgnum_vpar tangent | 240 | `amat(var_vpar,var_psi)` 192, `amat_k(var_vpar,var_psi)` 48 |
-| 8 — toroidal channel of the parallel-parallel viscosity | 6 | `amat_n(var_vpar,var_vpar)` 4, `amat_kn(var_vpar,var_vpar)` 2 |
+| 8 — toroidal channel of the parallel-parallel viscosity | 6 | `amat_kn(var_vpar,var_vpar)` 2, `amat_n(var_vpar,var_vpar)` 4 |
 | 10 — impurity parallel diffusivity, toroidal channel | 6 | `rhs_ij_k(var_rhoimp)` 6 |
-| 12 — three omissions in the ion energy tangents | 13 | `amat(var_Ti,var_psi)` 4, `amat_k(var_Ti,var_rho)` 4, `amat(var_Ti,var_Te)` 1, `amat_k(var_Te,var_rho)` 4 |
-| 13 — missing theta factor | 120 | `amat(var_Te,var_Te)` 80, `amat_k(var_Te,var_Te)` 40 |
-| 14 — alpha_e versus alpha_e_bis | 4 | `amat(var_Te,var_Te)` 4 |
-| 15 — three omissions in the electron energy tangents | 27 | `amat(var_Te,var_Te)` 18, `amat(var_Te,var_rhon)` 4, `amat(var_Te,var_rhoimp)` 5 |
-| **total** | **608** | |
+| 12 — omissions in the energy tangents (a,b) | 21 | `amat(var_t,var_psi)` 4, `amat(var_ti,var_psi)` 4, `amat(var_ti,var_te)` 1, `amat_k(var_t,var_rho)` 4, `amat_k(var_te,var_rho)` 4, `amat_k(var_ti,var_rho)` 4 |
+| 14 — alpha_e/alpha_imp versus their "bis" forms | 8 | `amat(var_te,var_te)` 4, `amat_k(var_t,var_psi)` 4 |
+| 15 — omissions in the electron and total energy tangents | 70 | `amat(var_t,var_rhoimp)` 15, `amat(var_t,var_t)` 28, `amat(var_te,var_rhoimp)` 5, `amat(var_te,var_rhon)` 4, `amat(var_te,var_te)` 18 |
+| 16 — neutral density in the single-T parallel convection | 8 | `rhs_ij(var_t)` 8 |
+| 17 — impurity pressure in amat_n(var_T,var_vpar) | 2 | `amat_n(var_t,var_vpar)` 2 |
+| **total** | **553** | |
 
-Findings 3, 9 and 11 do not appear here: their terms exist on both sides and
-differ only by a coefficient, a sign or a power of `BigR`, so the report shows
-them on one line rather than leaving a blank. The same is true of most of
-finding 13 — the table counts both halves of each pair.
-
-Counts are report lines, which is not the same as the residual monomial counts
-quoted under each finding: several generated lines cancel against each other
-inside a residual.
+Findings 3, 9, 11 and 13 do not appear in the table: their terms exist on both
+sides and differ only by a coefficient, a sign, a power of `BigR` or a missing
+`theta`, so the report puts them on one line rather than leaving a blank.  The
+counts above are report lines and are not the residual monomial counts quoted
+under each finding; several generated lines cancel against each other inside a
+residual.
 
 Only four source lines in the whole export have no generated partner at all:
 the two `alpha_e` lines of finding 14 and the two uncorrected-density lines of
-finding 15(b). Both are symbol substitutions rather than scalings, so the
+finding 15(b).  Both are symbol substitutions rather than scalings, so the
 matcher deliberately does not pair them; guessing symbol equivalences would
 hide exactly the kind of error they represent.
 
@@ -825,7 +919,7 @@ element routine does not.
 The tool also verifies its own alignment: the blank cells of every block must
 account for that block's multiset difference, and a surplus is reported as
 `MISALIGNED`.  In the aligned Markdown reports, a blank cell on the generated
-side is therefore a genuine missing term: across all 209 blocks every source line has a generated
+side is therefore a genuine missing term: across all 233 blocks every source line has a generated
 counterpart on the same line, including the ones that differ only by a
 coefficient (findings 3, 6 and 9) or by a power of `BigR` (finding 11).
 
