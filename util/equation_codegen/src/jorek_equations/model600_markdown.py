@@ -48,6 +48,7 @@ class SourceAssignment:
     row: str
     line: int
     expression: str
+    temperature_model: str = "both"
 
 
 def _clean_lhs(lhs):
@@ -59,9 +60,33 @@ def _read_source_assignments(path):
 
     lines = Path(path).read_text(encoding="utf-8").splitlines()
     result = []
+    temperature_model = "both"
+    # Stack only conditionals controlled by ``with_TiTe``.  It is necessary
+    # because model600 contains further ordinary IF blocks inside each
+    # temperature branch, and a bare ``endif`` must not accidentally change
+    # the active temperature convention.
+    temperature_stack = []
     index = 0
     while index < len(lines):
-        code = lines[index].split("!", 1)[0]
+        raw = lines[index]
+        code = raw.split("!", 1)[0]
+        lowered = raw.lower()
+        if re.search(r"\bif\s*\(\s*with_tite\s*\)\s*then", lowered):
+            temperature_stack.append([temperature_model, 0])
+            temperature_model = "two"
+        elif temperature_stack and re.search(r"\bif\s*\([^)]*\)\s*then", lowered):
+            temperature_stack[-1][1] += 1
+        elif (
+            temperature_stack
+            and temperature_stack[-1][1] == 0
+            and re.match(r"^\s*else\b(?!\s*if)", lowered)
+        ):
+            temperature_model = "single"
+        elif temperature_stack and re.search(r"\bend\s*if\b", lowered):
+            if temperature_stack[-1][1]:
+                temperature_stack[-1][1] -= 1
+            else:
+                temperature_model = temperature_stack.pop()[0]
         match = ASSIGNMENT_RE.search(code)
         if match is None:
             index += 1
@@ -90,12 +115,18 @@ def _read_source_assignments(path):
                 current = current[1:]
         expression = " ".join(piece for piece in pieces if piece)
         # Repeated extension assignments have the form ``a = a + extension``.
+        # Extension assignments commonly use either ``lhs = lhs + term`` or
+        # ``lhs = lhs - term``.  Remove only the repeated lhs and preserve the
+        # following sign so the extension remains a source term.
         expression = re.sub(
-            r"^{}\s*\+\s*".format(re.escape(lhs)), "", _clean_assignment_refs(expression),
-            flags=re.I,
+            r"^{}\s*".format(re.escape(lhs)), "",
+            _clean_assignment_refs(expression), flags=re.I,
         )
         result.append(
-            SourceAssignment(lhs, match.group("row").lower(), index + 2 - len(pieces), expression)
+            SourceAssignment(
+                lhs, match.group("row").lower(), index + 2 - len(pieces),
+                expression, temperature_model,
+            )
         )
         index += 1
     return result
@@ -148,11 +179,16 @@ def _normalized_text(text, *, single_temperature=False, two_temperature=False):
     return re.sub(r"\bBigR_x\b", "1", result, flags=re.I)
 
 
-def _parsed_terms(text):
+def _parsed_terms(text, *, temperature_model=None):
     """Return expanded monomials, or the original text when unsupported."""
 
     variants = []
-    for single, two in ((False, False), (True, False), (False, True)):
+    variants_to_try = {
+        "single": ((True, False),),
+        "two": ((False, True),),
+        None: ((False, False), (True, False), (False, True)),
+    }[temperature_model]
+    for single, two in variants_to_try:
         try:
             parsed = parse_fortran_expression(
                 _normalized_text(text, single_temperature=single, two_temperature=two)
@@ -252,8 +288,10 @@ def _add_raw_rhs(pools, row, expression, *, previous_names=None):
         pools[_clean_lhs(lhs)].append(fortran(term, previous_names=previous_names))
 
 
-def _generated_pools(rows=ROWS, requested_lhs=None):
-    """Generate implemented non-NEO terms only for the requested rows."""
+def _generated_pools(
+    rows=ROWS, requested_lhs=None, *, include_neo=True, with_tite=None,
+):
+    """Generate implemented model-600 terms for the requested rows."""
 
     rows = set(rows)
     requested_lhs = set(requested_lhs or ())
@@ -262,27 +300,18 @@ def _generated_pools(rows=ROWS, requested_lhs=None):
     theta = coefficient("theta")
     zeta = coefficient("zeta")
     if "psi" in rows:
-        for with_tite in (False,):
-            equation = induction_equation_1(with_TiTe=with_tite)
-            result = equation.linearize(
-                fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
-            )
-            _add_linearized(
-                pools, "psi", result,
-                previous_names={"psi": "delta_g(mp,var_psi,ms,mt)"},
-                include_fields=tuple(field for field in FIELDS if field not in (psi, rho, Te)),
-            )
-        # The physical RHS is a single expression; only the AMAT has separate
-        # one- and two-temperature source branches.
-        equation = induction_equation_1(with_TiTe=True)
+        # Both the residual and every tangent column follow the temperature
+        # model of the section being exported.  The two branches differ in
+        # more than naming: the one-temperature electron pressure is built
+        # from Te0 = T0/2.
+        psi_with_tite = bool(with_tite)
+        equation = induction_equation_1(with_TiTe=psi_with_tite)
         result = equation.linearize(
             fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
         )
         _add_linearized(
             pools, "psi", result,
             previous_names={"psi": "delta_g(mp,var_psi,ms,mt)"},
-            include_rhs=False,
-            include_fields=(psi, rho, Te),
         )
     if "zj" in rows:
         _add_linearized(
@@ -294,25 +323,22 @@ def _generated_pools(rows=ROWS, requested_lhs=None):
         )
     if "u" in rows:
         only_u_rhs = requested_lhs and requested_lhs <= {"rhs_ij(var_u)"}
-        for with_tite in (False, True):
+        temperature_branches = (False, True) if with_tite is None else (with_tite,)
+        for with_tite in temperature_branches:
             equation = momentum_equation_2(
                 with_TiTe=with_tite,
                 include_diamagnetic=True,
                 include_conservative=True,
                 include_tgnum=True,
                 include_neutrals=True,
-                include_impurities=not only_u_rhs,
-                # NEO AMAT is deliberately excluded until its symbolic
-                # expansion is supported by the integrated checker.
-                include_neo=False,
+                include_impurities=True,
+                include_neo=include_neo,
             )
             # The source routine contains both the one- and two-temperature
             # RHS branches.  Retain both raw expressions so terms involving
             # ``Ti0``/``Te0`` can be aligned as well as the single-T terms.
             _add_raw_rhs(
-                pools,
-                "u",
-                _raw_evolution_rhs(equation, FIELDS, timestep, zeta),
+                pools, "u", _raw_evolution_rhs(equation, FIELDS, timestep, zeta),
                 previous_names={"u": "delta_u", "rho": "delta_rho_g"},
             )
             if not only_u_rhs:
@@ -404,11 +430,13 @@ def _u_rhs_order_key(text):
     return len(groups)
 
 
-def _expanded_ordered_monomials(text, *, two_temperature=False):
-    variants = _parsed_terms(text)
+def _expanded_ordered_monomials(text, *, temperature_model=None):
+    """Expand generated text using the same temperature convention as source."""
+
+    variants = _parsed_terms(text, temperature_model=temperature_model)
     if not variants:
         return []
-    terms = variants[-1] if two_temperature and "te0" not in text.lower() else variants[0]
+    terms = variants[0]
     common_symbols = set.intersection(
         *(set(term.free_symbols) for term in terms)
     ) if terms else set()
@@ -418,20 +446,147 @@ def _expanded_ordered_monomials(text, *, two_temperature=False):
     )
 
 
-def _source_monomial_slots(assignments, generated_terms):
+def _monomial_structure(term):
+    """Return the coefficient-free part of a monomial."""
+
+    return sp.cancel(term).as_coeff_Mul()[1]
+
+
+def _combine_source_duplicates(source_monomials, generated_by_key):
+    """Sum source monomials the generated side reports only once.
+
+    A Fortran assignment writes a Jacobian as a sum of separately factored
+    outer terms, and two of those outer terms can expand onto the same
+    monomial.  The product rule in the generator, by contrast, always returns
+    fully combined monomials, so the same contribution appears there with the
+    summed coefficient.  The example in model 600 is the Taylor-Galerkin
+    ``tgnum_u`` tangent, where ``0.25*(w0_x*u_y - w0_y*u_x)*(v_x*u0_y - ...)``
+    and ``0.25*(w0_x*u0_y - w0_y*u0_x)*(v_x*u_y - ...)`` both contain
+    ``v_x*u0_y*u_y*w0_x`` and therefore combine to ``0.5``.
+
+    Source monomials are combined only when the generated block really has
+    fewer copies of that monomial structure; otherwise the one-slot-per-outer
+    term layout of the report is preserved.
+    """
+
+    generated_structures = defaultdict(int)
+    for terms in generated_by_key.values():
+        for term in terms:
+            generated_structures[_monomial_structure(term)] += 1
+
+    positions = defaultdict(list)
+    for index, (_, source_term, _) in enumerate(source_monomials):
+        if source_term is None:
+            continue
+        positions[_monomial_structure(source_term)].append(index)
+
+    dropped = set()
+    combined = {}
+    for structure, indices in positions.items():
+        if len(indices) <= max(generated_structures.get(structure, 0), 1):
+            continue
+        total = sp.Add(*(source_monomials[index][1] for index in indices))
+        combined[indices[0]] = sp.expand(total)
+        dropped.update(indices[1:])
+
+    result = []
+    for index, entry in enumerate(source_monomials):
+        if index in dropped:
+            continue
+        if index in combined:
+            if combined[index] == 0:
+                continue
+            assignment, _, source_raw = entry
+            entry = (assignment, combined[index], source_raw)
+        result.append(entry)
+    return result
+
+
+def _source_monomial_slots(assignments, generated_terms, *, temperature_model=None):
     """Expand both sides and align every generated monomial to source order."""
 
     source_monomials = []
-    for assignment in assignments:
-        for piece in _split_top_level(assignment.expression):
-            for term in _expanded_ordered_monomials(piece):
+    # The NEO psi tangent is written in JOREK as four additive variations,
+    # while SymPy combines equal monomials when differentiating the compact
+    # residual.  Combine the source block first as well; otherwise a source
+    # coefficient such as ``1`` is compared with the algebraically equivalent
+    # combined generated coefficient ``3`` on a different source line.
+    source_assignments = assignments
+    if (
+        assignments
+        and assignments[0].lhs == "amat(var_u,var_psi)"
+        and any("amu_neo_prof" in item.expression for item in assignments)
+    ):
+        combined = " + ".join(item.expression for item in assignments)
+        source_assignments = (
+            SourceAssignment(assignments[0].lhs, assignments[0].row,
+                             assignments[0].line, combined),
+        )
+    combine_neo_psi = (
+        assignments
+        and assignments[0].lhs == "amat(var_u,var_psi)"
+        and any("amu_neo_prof" in item.expression for item in assignments)
+    )
+    for assignment in source_assignments:
+        pieces = ([assignment.expression] if combine_neo_psi
+                  else _split_top_level(assignment.expression))
+        for piece in pieces:
+            variants = _parsed_terms(piece, temperature_model=temperature_model)
+            use_two_temperature = (
+                assignment.lhs in {
+                    "amat(var_psi,var_psi)",
+                    "amat(var_psi,var_rho)",
+                    "amat_n(var_psi,var_rho)",
+                }
+                or "var_te" in assignment.lhs
+            )
+            expanded = []
+            if variants:
+                if use_two_temperature:
+                    # Explicit Te0 source terms already identify the branch;
+                    # abstract Pe0 terms require the two-temperature alias.
+                    variant_index = (
+                        0 if "te0" in piece.lower() else len(variants) - 1
+                    )
+                else:
+                    variant_index = 0
+                expanded = list(variants[variant_index])
+                common_symbols = set.intersection(
+                    *(set(term.free_symbols) for term in expanded)
+                ) if expanded else set()
+                expanded.sort(
+                    key=lambda term: _source_term_order(
+                        piece, term, common_symbols
+                    )
+                )
+            if not expanded:
+                # Keep unsupported source expressions (currently NEO terms)
+                # visible in the report instead of silently dropping them.
+                source_monomials.append((assignment, None, piece))
+                continue
+            for term in expanded:
                 if term == 0:
                     continue
-                source_monomials.append((assignment, term))
+                source_monomials.append((assignment, term, None))
 
     generated_by_key = defaultdict(list)
-    for text in generated_terms:
-        for term in _expanded_ordered_monomials(text):
+    # For a source NEO block, keep only generated NEO terms in this local
+    # alignment.  The complete generated pool also contains the ordinary
+    # momentum terms, which must not appear as unrelated generated-only rows
+    # in the NEO subsection.
+    neo_block = bool(
+        assignments
+        and assignments[0].lhs == "amat(var_u,var_psi)"
+        and any("amu_neo_prof" in item.expression for item in assignments)
+    )
+    pool_terms = (
+        [text for text in generated_terms if "amu_neo_prof" in text]
+        if neo_block else generated_terms
+    )
+    for text in pool_terms:
+        for term in _expanded_ordered_monomials(
+            text, temperature_model=temperature_model,
+        ):
             # The residual history in the element routine uses the physical
             # background density ``r0``; only the velocity tangent uses the
             # corrected coefficient ``r0_corr``.  The DSL shares one A form,
@@ -472,39 +627,40 @@ def _source_monomial_slots(assignments, generated_terms):
                 # variable already contains the explicit background Te0.
                 term = sp.cancel(term / sp.Symbol("Te0"))
             generated_by_key[_canonical_monomial(term)].append(term)
-            # SymPy combines the two identical active/background TGNUM
-            # variations into a single 1/2 monomial.  The Fortran source keeps
-            # them as two 1/4 assignments, so expose the split representation
-            # to the row matcher as well.
-            if (
-                term.has(sp.Symbol("tgnum_u"))
-                and term.is_Mul
-                and abs(term.as_coeff_Mul()[0]) >= sp.Rational(1, 2)
-            ):
-                half = term / 2
-                generated_by_key[_canonical_monomial(half)].extend((half, half))
+
+    source_monomials = _combine_source_duplicates(
+        source_monomials, generated_by_key
+    )
 
     slots = []
-    for assignment, source_term in source_monomials:
+    matched_rendered = set()
+    for assignment, source_term, source_raw in source_monomials:
+        if source_term is None:
+            slots.append((assignment, source_raw, ""))
+            continue
         source_display = _canonical_monomial(source_term)
-        match_term = source_term
-        if assignment.lhs == "amat(var_u,var_t)":
-            # In the one-temperature source branch Ti0 is the common T0 and
-            # W_dia_Ti is the derivative of W_dia with respect to that common
-            # temperature.
-            match_term = source_term.xreplace({
-                sp.Symbol("Ti0_x"): sp.Symbol("T0_x"),
-                sp.Symbol("Ti0_y"): sp.Symbol("T0_y"),
-                sp.Symbol("W_dia_Ti"): sp.Symbol("W_dia_T"),
-            })
-        key = _canonical_monomial(match_term)
+        key = _canonical_monomial(source_term)
         matches = generated_by_key[key]
         generated = _canonical_monomial(matches.pop(0)) if matches else ""
-        if generated and assignment.lhs == "amat(var_u,var_t)":
-            # Render the accepted one-temperature aliases with the source
-            # spelling so Meld shows a truly aligned report.
-            generated = source_display
+        if generated:
+            matched_rendered.add(generated)
         slots.append((assignment, source_display, generated))
+
+    # Do not hide generated-only terms.  They are emitted after the aligned
+    # source rows with an empty source column, which makes sign or convention
+    # inconsistencies visible in Meld.
+    synthetic = SourceAssignment(
+        assignments[0].lhs, assignments[0].row, 0, ""
+    ) if assignments else None
+    if synthetic is not None:
+        emitted = set()
+        for values in generated_by_key.values():
+            for term in values:
+                rendered = _canonical_monomial(term)
+                if rendered in emitted or rendered in matched_rendered:
+                    continue
+                emitted.add(rendered)
+                slots.append((synthetic, "", rendered))
     return slots
 
 
@@ -546,6 +702,11 @@ def _factor_order(factor):
 def _canonical_monomial(term):
     """Render one monomial with the same factor order in both reports."""
 
+    # SymPy may leave a common numeric factor in both the numerator and an
+    # expanded NEO denominator (for example ``-2/(2*D)``).  Reduce rational
+    # factors before ordering products so algebraically identical source and
+    # generated monomials receive the same key.
+    term = sp.cancel(term)
     coefficient = sp.S.One
     factors = []
     for factor in sp.Mul.make_args(term):
@@ -571,22 +732,25 @@ def _canonical_monomial(term):
     return result
 
 
-def _canonical_display(text, *, two_temperature=False):
-    """Normalize multiplication ordering without changing term grouping."""
+def _canonical_display(text, *, temperature_model=None):
+    """Normalize multiplication ordering without changing term grouping.
 
-    variants = _parsed_terms(text)
+    The temperature convention must be named rather than picked by position:
+    ``_parsed_terms`` drops variants that coincide, so an expression without
+    two-temperature aliases would otherwise be displayed through whichever
+    convention happened to survive.
+    """
+
+    variants = _parsed_terms(text, temperature_model=temperature_model)
     if not variants:
         return text
-    if two_temperature:
-        terms = variants[0] if "te0" in text.lower() else variants[-1]
-    else:
-        terms = variants[0]
+    terms = variants[0]
     if len(terms) == 1 and terms[0] == 0:
         return ""
     return " + ".join(_canonical_monomial(term) for term in terms)
 
 
-def _source_slots(assignments, generated):
+def _source_slots(assignments, generated, *, temperature_model=None):
     """Align generated monomials to source monomials in source order."""
 
     slots = []
@@ -598,15 +762,77 @@ def _source_slots(assignments, generated):
     # the generated line in the same row as its source monomial and leaves a
     # genuinely empty line when that contribution is not implemented.
     if assignments and all(assignment.row == "u" for assignment in assignments):
+        def _remove_branch_duplicates(pool):
+            """Drop exact terms repeated only because both T branches run.
+
+            Terms containing an explicit background temperature belong to a
+            branch and must remain separate.  Terms without ``T0``, ``Ti0``
+            or ``Te0`` are branch-independent (base, magnetic, and most
+            geometric terms); retaining two identical copies made the report
+            look as if the generator had duplicated physics.
+            """
+            seen = set()
+            result = []
+            for term in pool:
+                lowered = term.lower()
+                branch_specific = any(
+                    marker in lowered for marker in ("t0", "ti0", "te0")
+                )
+                if not branch_specific:
+                    if term in seen:
+                        continue
+                    seen.add(term)
+                result.append(term)
+            return result
+
         by_lhs = defaultdict(list)
         for assignment in assignments:
             by_lhs[assignment.lhs].append(assignment)
         slots = []
         for lhs, lhs_assignments in by_lhs.items():
-            slots.extend(
-                _source_monomial_slots(lhs_assignments, generated.get(lhs, ()))
-            )
+            pool = generated.get(lhs, ())
+            neo_assignments = [
+                item for item in lhs_assignments
+                if "amu_neo_prof" in item.expression
+            ]
+            regular_assignments = [
+                item for item in lhs_assignments
+                if "amu_neo_prof" not in item.expression
+            ]
+            if regular_assignments:
+                slots.extend(
+                    _source_monomial_slots(
+                        regular_assignments,
+                        _remove_branch_duplicates(
+                            [term for term in pool if "amu_neo_prof" not in term]
+                        ), temperature_model=temperature_model,
+                    )
+                )
+            if neo_assignments:
+                slots.extend(
+                    _source_monomial_slots(
+                        neo_assignments,
+                        [term for term in pool if "amu_neo_prof" in term],
+                        temperature_model=temperature_model,
+                    )
+                )
         return slots
+    # Export the remaining equations (notably PSI) at monomial granularity as
+    # well.  The older path below aligned whole Fortran additive pieces, which
+    # made the PSI report look as though monomials were missing even when the
+    # generated expression contained them.
+    if assignments:
+        by_lhs = defaultdict(list)
+        for assignment in assignments:
+            by_lhs[assignment.lhs].append(assignment)
+        return [
+            slot
+            for lhs, lhs_assignments in by_lhs.items()
+            for slot in _source_monomial_slots(
+                lhs_assignments, generated.get(lhs, ()),
+                temperature_model=temperature_model,
+            )
+        ]
     # Parsing generated text is expensive, especially for the expanded u
     # tangent.  Build the canonical lookup once instead of once per source
     # term.
@@ -710,38 +936,39 @@ def _source_slots(assignments, generated):
     return slots
 
 
-def _render_report(slots, side, rows=ROWS):
+def _render_report(
+    slots, side, rows=ROWS, *, include_neo=False, temperature_model=None,
+):
+    section = {
+        "single": "Single-temperature (T) model",
+        "two": "Two-temperature (Ti/Te) model",
+    }.get(temperature_model)
     lines = [
-        "# Model 600 equation terms",
+        "## {}".format(section) if section else "# Model 600 equation terms",
         "",
         "> Rows currently exported: {}.".format(
             ", ".join("`{}`".format(row) for row in rows)
         ),
-        "> NEO AMAT terms are not generated yet; their generated slots are blank.",
+        (
+            "> NEO RHS and AMAT terms are included when the corresponding source branch is enabled."
+            if include_neo
+            else "> NEO RHS and AMAT terms are omitted from this comparison."
+        ),
         "",
     ]
     for row in rows:
-        lines.extend(("## var_{}".format(row), ""))
+        lines.extend(("### var_{}".format(row) if section else "## var_{}".format(row), ""))
         row_slots = [slot for slot in slots if slot[0].row == row]
         lhs_order = list(dict.fromkeys(slot[0].lhs for slot in row_slots))
         for lhs in lhs_order:
-            lines.extend(("### `{}`".format(lhs), ""))
+            lines.extend(("#### `{}`".format(lhs) if section else "### `{}`".format(lhs), ""))
             for assignment, source, generated in row_slots:
                 if assignment.lhs != lhs:
                     continue
                 value = source if side == "source" else generated
                 value = " ".join(value.split())
-                use_two_temperature = (
-                    assignment.lhs in {
-                        "amat(var_psi,var_psi)",
-                        "amat(var_psi,var_rho)",
-                        "amat_n(var_psi,var_rho)",
-                    }
-                    or "var_te" in assignment.lhs
-                )
                 value = _canonical_display(
-                    value,
-                    two_temperature=use_two_temperature and side == "source",
+                    value, temperature_model=temperature_model,
                 )
                 # Keep exactly one physical line per aligned term.  An
                 # unavailable term is intentionally an actually empty line,
@@ -752,12 +979,14 @@ def _render_report(slots, side, rows=ROWS):
 
 
 def export_model600_markdown(
-    source_path, source_output, generated_output, equations=None, assignments=None
+    source_path, source_output, generated_output, equations=None, assignments=None,
+    include_neo=False,
 ):
     """Write aligned source/generated reports and return their paths.
 
     ``equations`` may contain any of ``psi``, ``u``, ``zj`` and ``w``.  If it
-    is omitted, all four rows are exported.
+    is omitted, all four rows are exported.  NEO terms are omitted by default;
+    pass ``include_neo=True`` to include them.
     """
 
     rows = tuple(equations or ROWS)
@@ -765,22 +994,49 @@ def export_model600_markdown(
     if invalid:
         raise ValueError("Unknown model-600 equation(s): {}".format(", ".join(sorted(invalid))))
     assignment_filter = assignments
-    assignments = [
-        assignment for assignment in _read_source_assignments(source_path)
-        if assignment.row in rows
-    ]
     requested = {_clean_lhs(name) for name in assignment_filter} if assignment_filter else None
-    generated = _generated_pools(rows, requested_lhs=requested)
-    if assignment_filter is not None:
-        assignments = [assignment for assignment in assignments if assignment.lhs in requested]
-        generated = {
-            lhs: terms for lhs, terms in generated.items() if lhs in requested
-        }
-    slots = _source_slots(assignments, generated)
+    all_assignments = _read_source_assignments(source_path)
+    source_sections = []
+    generated_sections = []
+    for temperature_model, with_tite in (("single", False), ("two", True)):
+        source_assignments = [
+            assignment for assignment in all_assignments
+            if assignment.row in rows
+            and assignment.temperature_model in ("both", temperature_model)
+            and (include_neo or "amu_neo_prof" not in assignment.expression)
+        ]
+        generated = _generated_pools(
+            rows, requested_lhs=requested, include_neo=include_neo,
+            with_tite=with_tite,
+        )
+        if assignment_filter is not None:
+            source_assignments = [
+                assignment for assignment in source_assignments
+                if assignment.lhs in requested
+            ]
+            generated = {
+                lhs: terms for lhs, terms in generated.items() if lhs in requested
+            }
+        slots = _source_slots(
+            source_assignments, generated, temperature_model=temperature_model,
+        )
+        source_sections.append(
+            _render_report(
+                slots, "source", rows, include_neo=include_neo,
+                temperature_model=temperature_model,
+            )
+        )
+        generated_sections.append(
+            _render_report(
+                slots, "generated", rows, include_neo=include_neo,
+                temperature_model=temperature_model,
+            )
+        )
     source_output = Path(source_output)
     generated_output = Path(generated_output)
     source_output.parent.mkdir(parents=True, exist_ok=True)
     generated_output.parent.mkdir(parents=True, exist_ok=True)
-    source_output.write_text(_render_report(slots, "source", rows), encoding="utf-8")
-    generated_output.write_text(_render_report(slots, "generated", rows), encoding="utf-8")
+    header = "# Model 600 equation terms\n\n"
+    source_output.write_text(header + "\n".join(source_sections), encoding="utf-8")
+    generated_output.write_text(header + "\n".join(generated_sections), encoding="utf-8")
     return source_output, generated_output

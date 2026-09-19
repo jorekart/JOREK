@@ -655,6 +655,15 @@ def _normalize_model600_text(
         expression,
         flags=re.I,
     )
+    # NEO profile work arrays are scalar values at the element/toroidal
+    # point, despite being called as indexed Fortran functions.
+    for profile in ("amu_neo_prof", "aki_neo_prof"):
+        expression = re.sub(
+            r"\b{}\s*\(\s*ms\s*,\s*mt\s*\)".format(profile),
+            profile,
+            expression,
+            flags=re.I,
+        )
     # The symbolic DSL prints the supplied density correction as a function
     # call, while the element routine stores its value and derivative in the
     # work variables ``r0_corr`` and ``dr0_corr_dn``.
@@ -669,36 +678,136 @@ def _normalize_model600_text(
     # correction branch where d(r0_corr)/d(rho)=1; compare that convention
     # with the explicit DSL derivative call.
     expression = re.sub(r"\bdr0_corr_dn\b", "1", expression)
-    pressure_temperature = "Te0" if two_temperature else "T0"
-    ion_temperature = "Ti0" if two_temperature else "T0"
+    if single_temperature:
+        # The one-temperature model evolves the total temperature.  Do not
+        # identify either Ti0 or Te0 with T0 individually; only their sum
+        # (and the corresponding directional/spatial derivatives) is T0.
+        for suffix in ("", "_s", "_t", "_p", "_x", "_y", "_xx", "_yy", "_xy"):
+            expression = re.sub(
+                r"\bTi0{}\s*\+\s*Te0{}\b".format(suffix, suffix),
+                "T0{}".format(suffix), expression, flags=re.I,
+            )
+            expression = re.sub(
+                r"\bTe0{}\s*\+\s*Ti0{}\b".format(suffix, suffix),
+                "T0{}".format(suffix), expression, flags=re.I,
+            )
+        expression = re.sub(
+            r"\balpha_imp_T\b", "(alpha_imp*T0)", expression, flags=re.I,
+        )
+    # ``alpha_e_T`` is the DSL print name of the closure value alpha_e*Te0.
+    # It is spelled the same way in both temperature models; the single
+    # temperature substitution Te0 = T0/2 is applied at the end.
+    expression = re.sub(
+        r"\balpha_e_T\b", "(alpha_e*Te0)", expression, flags=re.I,
+    )
+    pressure_temperature = "Te0"
+    ion_temperature = "Ti0"
+    # ``construct_pressure`` always includes impurity pressure when the
+    # impurity extension is active.  Reports compare that full definition,
+    # rather than treating P0/Pi0/Pe0 as opaque element work variables.
+    # ``construct_pressure`` is written once for both temperature models: it
+    # always builds the species pressures from Ti0/Te0 and the per-species
+    # impurity coefficients.  The one-temperature branch reaches it with
+    # Ti0=Te0=T0/2, which the substitutions at the end of this function
+    # apply.  Expanding the aliases in the two-species basis therefore
+    # reproduces the element routine exactly in both branches.
+    ion_alpha = "alpha_i"
+    ion_density = "(r0+rhoimp0*alpha_i)"
+    electron_density = "(r0+rhoimp0*alpha_e)"
+    electron_density_tangent = "(r0+rhoimp0*alpha_e_bis)"
+
+    pi0 = "({}*{})".format(ion_density, ion_temperature)
+    pe0 = "({}*{})".format(electron_density, pressure_temperature)
+    pi_derivatives = {
+        "s": "((r0_s+rhoimp0_s*{a})*{t}+{d}*{t}_s)",
+        "t": "((r0_t+rhoimp0_t*{a})*{t}+{d}*{t}_t)",
+        "p": "((r0_p+rhoimp0_p*{a})*{t}+{d}*{t}_p)",
+        "x": "((r0_x+rhoimp0_x*{a})*{t}+{d}*{t}_x)",
+        "y": "((r0_y+rhoimp0_y*{a})*{t}+{d}*{t}_y)",
+        "xx": "((r0_xx+rhoimp0_xx*{a})*{t}+2*(r0_x+rhoimp0_x*{a})*{t}_x+{d}*{t}_xx)",
+        "yy": "((r0_yy+rhoimp0_yy*{a})*{t}+2*(r0_y+rhoimp0_y*{a})*{t}_y+{d}*{t}_yy)",
+        "xy": "((r0_xy+rhoimp0_xy*{a})*{t}+(r0_x+rhoimp0_x*{a})*{t}_y+(r0_y+rhoimp0_y*{a})*{t}_x+{d}*{t}_xy)",
+    }
+    pi_derivatives = {
+        key: value.format(a=ion_alpha, d=ion_density, t=ion_temperature)
+        for key, value in pi_derivatives.items()
+    }
+    pe_derivatives = {
+        "s": "((r0_s+rhoimp0_s*alpha_e)*{t}+{dt}*{t}_s)",
+        "t": "((r0_t+rhoimp0_t*alpha_e)*{t}+{dt}*{t}_t)",
+        "p": "((r0_p+rhoimp0_p*alpha_e)*{t}+{dt}*{t}_p)",
+        "x": "((r0_x+rhoimp0_x*alpha_e)*{t}+{dt}*{t}_x)",
+        "y": "((r0_y+rhoimp0_y*alpha_e)*{t}+{dt}*{t}_y)",
+    }
+    pe_derivatives = {
+        key: value.format(d=electron_density, dt=electron_density_tangent,
+                          t=pressure_temperature)
+        for key, value in pe_derivatives.items()
+    }
+    p0 = "({}+{})".format(pi0, pe0)
+    p0_derivatives = {
+        key: "({}+{})".format(pi_derivatives[key], pe_derivatives[key])
+        for key in ("s", "t")
+    }
     aliases = {
         "BB2": "((F0**2+ps0_x**2+ps0_y**2)/BigR**2)",
-        "Pe0": "(r0*{})".format(pressure_temperature),
-        "Pe0_s": "(r0_s*{}+r0*{}_s)".format(pressure_temperature, pressure_temperature),
-        "Pe0_t": "(r0_t*{}+r0*{}_t)".format(pressure_temperature, pressure_temperature),
-        "Pe0_p": "(r0_p*{}+r0*{}_p)".format(pressure_temperature, pressure_temperature),
-        "Pe0_x": "(r0_x*{}+r0*{}_x)".format(pressure_temperature, pressure_temperature),
-        "Pe0_y": "(r0_y*{}+r0*{}_y)".format(pressure_temperature, pressure_temperature),
-        "Pi0": "(r0*{})".format(ion_temperature),
-        "Pi0_s": "(r0_s*{}+r0*{}_s)".format(ion_temperature, ion_temperature),
-        "Pi0_t": "(r0_t*{}+r0*{}_t)".format(ion_temperature, ion_temperature),
-        "Pi0_y": "(r0_y*{}+r0*{}_y)".format(ion_temperature, ion_temperature),
+        "Btheta2": "((ps0_x**2+ps0_y**2)/BigR**2)",
+        "Btheta2_psi": "(2*(psi_x*ps0_x+psi_y*ps0_y)/BigR**2)",
+        "Vpar0": "vpar0",
+        "Pe0": pe0,
+        "Pe0_s": pe_derivatives["s"],
+        "Pe0_t": pe_derivatives["t"],
+        "Pe0_p": pe_derivatives["p"],
+        "Pe0_x": pe_derivatives["x"],
+        "Pe0_y": pe_derivatives["y"],
+        "Pi0": pi0,
+        "Pi0_s": pi_derivatives["s"],
+        "Pi0_t": pi_derivatives["t"],
+        "Pi0_y": pi_derivatives["y"],
         # Cartesian derivatives used by the diamagnetic viscosity block.
         # Keep these as explicit product rules so source and DSL expressions
         # are expanded to the same monomials by the report matcher.
-        "Pi0_x": "(r0_x*{}+r0*{}_x)".format(ion_temperature, ion_temperature),
-        "Pi0_xx": "(r0_xx*{}+2*r0_x*{}_x+r0*{}_xx)".format(
-            ion_temperature, ion_temperature, ion_temperature
-        ),
-        "Pi0_yy": "(r0_yy*{}+2*r0_y*{}_y+r0*{}_yy)".format(
-            ion_temperature, ion_temperature, ion_temperature
-        ),
-        "Pi0_xy": "(r0_xy*{}+r0_x*{}_y+r0_y*{}_x+r0*{}_xy)".format(
-            ion_temperature, ion_temperature, ion_temperature, ion_temperature
-        ),
+        "Pi0_x": pi_derivatives["x"],
+        "Pi0_xx": pi_derivatives["xx"],
+        "Pi0_yy": pi_derivatives["yy"],
+        "Pi0_xy": pi_derivatives["xy"],
+        "P0": p0,
+        "P0_s": p0_derivatives["s"],
+        "P0_t": p0_derivatives["t"],
     }
     for name, replacement in aliases.items():
-        expression = re.sub(r"\b{}\b".format(name), replacement, expression)
+        expression = re.sub(
+            r"\b{}\b".format(name), replacement, expression, flags=re.I
+        )
     if single_temperature:
-        expression = re.sub(r"\bTe0([_a-z]*)\b", r"T0\1", expression)
+        # The element routine sets Ti0 = Te0 = T0/2 in the one-temperature
+        # branch (the evolved T0 is the total temperature), so a species
+        # temperature reaching this point is half of the evolved one.
+        expression = re.sub(r"\bTe0([_a-z]*)\b", r"(T0\1/2)", expression)
+        expression = re.sub(r"\bTi0([_a-z]*)\b", r"(T0\1/2)", expression)
+        # The one-temperature impurity closure stores the means of the
+        # per-species coefficients:  alpha_imp = (alpha_i+alpha_e)/2,
+        # alpha_imp_bis = (alpha_i+alpha_e_bis)/2 (alpha_i does not depend on
+        # temperature, so it is its own "bis"), and alpha_imp_tri =
+        # alpha_e_tri/4, the extra quarter coming from dTe0/dT0 = 1/2 applied
+        # twice.  Express everything in the two-species basis so that
+        # assignments shared between the branches and assignments written for
+        # one branch only use the same symbols.
+        expression = re.sub(
+            r"\balpha_imp_tri\b", "(alpha_e_tri/4)", expression, flags=re.I,
+        )
+        expression = re.sub(
+            r"\balpha_imp_bis\b", "((alpha_i+alpha_e_bis)/2)",
+            expression, flags=re.I,
+        )
+        expression = re.sub(
+            r"\balpha_imp\b", "((alpha_i+alpha_e)/2)", expression, flags=re.I,
+        )
+        # W_dia_Ti is assembled from Pi0_*_Ti, which the element routine
+        # builds from the *trial* temperature basis function without the
+        # dTi0/dT0 = 1/2 chain factor.  It is therefore twice the derivative
+        # of W_dia with respect to the evolved one-temperature field.
+        expression = re.sub(
+            r"\bW_dia_Ti\b", "(2*W_dia_T)", expression, flags=re.I,
+        )
     return expression

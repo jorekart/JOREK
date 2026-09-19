@@ -25,6 +25,11 @@ def main():
         action="append",
         help="export only this assignment, e.g. 'rhs_ij(var_u)'; repeat to select more",
     )
+    parser.add_argument(
+        "--include-neo",
+        action="store_true",
+        help="include NEO terms (omitted by default for the base-equation comparison)",
+    )
     args = parser.parse_args()
     reports = PROJECT_ROOT / "reports"
     source, generated = export_model600_markdown(
@@ -33,6 +38,7 @@ def main():
         reports / "model600_generated_terms.md",
         equations=args.equation,
         assignments=args.assignment,
+        include_neo=args.include_neo,
     )
     print("Wrote {}".format(source))
     print("Wrote {}".format(generated))

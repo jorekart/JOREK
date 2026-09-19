@@ -46,8 +46,8 @@ def main():
     reports = PROJECT_ROOT / "reports"
     failed = False
     if RUN_CHECKS:
-        print("WARNING: NEO AMAT terms are currently excluded from comparison.")
-        print("         Only NEO residual construction is checked.\n")
+        print("NOTE: NEO residual and AMAT generation are included in the reports.")
+        print("      The focused pass/fail checks below still use their existing scopes.\n")
         checks = (
             ("psi RHS", compare_model600_rhs_psi),
             ("psi AMAT(var_psi,var_psi)", compare_model600_amat_psi_psi),

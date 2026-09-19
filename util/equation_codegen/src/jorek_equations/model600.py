@@ -57,8 +57,10 @@ visco = external_function(
 visco_num = external_function(
     "visco_num600",
     arguments=("T",),
-    derivatives={"T": "dvisco_num_dT"},
-    policy="piecewise_active",
+    # The element routine computes dvisco_num_dT but deliberately does not
+    # place that derivative in the momentum AMAT temperature columns.
+    derivatives={},
+    policy="frozen",
     fortran_name="visco_num_T",
 )
 visco_fact_old = coefficient("visco_fact_old")
@@ -74,6 +76,15 @@ epsil = coefficient("epsil")
 alpha_e = coefficient("alpha_e")
 alpha_i = coefficient("alpha_i")
 alpha_imp = coefficient("alpha_imp")
+
+# ``alpha_i`` is supplied as an element work value in the two-temperature
+# branch.  It has no spatial derivative in the assembled source terms; an
+# argument-free frozen external represents that convention more faithfully
+# than a plain coefficient under derivative expansion.
+alpha_i_state = external_function(
+    "alpha_i600", arguments=(), derivatives={}, policy="frozen",
+    fortran_name="alpha_i",
+)
 
 dvisco_state = external_function(
     "dvisco_state600", arguments=("T",),
@@ -116,18 +127,18 @@ alpha_e_bis_state = external_function(
     "alpha_e_bis", arguments=("T",), derivatives={"T": "alpha_e_tri"},
     policy="piecewise_active", fortran_name="alpha_e_bis",
 )
-alpha_e_pressure = external_function(
-    "alpha_e_pressure600", arguments=("T",), derivatives={"T": "alpha_e_bis"},
-    policy="piecewise_active", fortran_name="alpha_e",
+alpha_e_temperature = external_function(
+    "alpha_e_temperature600", arguments=("T",), derivatives={"T": "alpha_e_bis"},
+    policy="piecewise_active", fortran_name="alpha_e_T",
 )
 alpha_imp_bis_state = external_function(
     "alpha_imp_bis", arguments=("T",), derivatives={"T": "alpha_imp_tri"},
     policy="piecewise_active", fortran_name="alpha_imp_bis",
 )
-alpha_imp_pressure = external_function(
-    "alpha_imp_pressure600", arguments=("T",),
+alpha_imp_temperature = external_function(
+    "alpha_imp_temperature600", arguments=("T",),
     derivatives={"T": "alpha_imp_bis"},
-    policy="piecewise_active", fortran_name="alpha_imp",
+    policy="piecewise_active", fortran_name="alpha_imp_T",
 )
 
 # Density correction used by the model-600 resistive/pressure terms.  It is
@@ -156,11 +167,10 @@ W_dia_single = external_function(
 )
 W_dia_two = external_function(
     "W_dia_two600",
-    arguments=("rho", "Ti", "Te"),
+    arguments=("rho", "Ti"),
     derivatives={
         "rho": "W_dia_rho",
         "Ti": "W_dia_Ti",
-        "Te": "W_dia_Te",
     },
     policy="piecewise_active",
     fortran_name="W_dia",
@@ -195,30 +205,31 @@ def induction_equation_1(
     resistive = eta_num_T(thermal) * dot(grad(v), grad(j)) * xjac
     base_B = psi_term + advection + resistive
     B = base_B
-    single_temperature_tangent_B = base_B
     if include_pressure_coupling:
-        Pe = rho * thermal
+        # ``construct_pressure`` builds Pe0 = (r0 + rimp0*alpha_e)*Te0 in both
+        # temperature models.  The one-temperature model evolves the total
+        # temperature and supplies Te0 = T0/2, so the electron temperature is
+        # half of the evolved field there.  alpha_e_temperature carries the
+        # closure's d(alpha_e*Te)/dTe = alpha_e_bis convention.
+        electron_temperature = Te if with_TiTe else T / 2
+        Pe = (
+            rho * electron_temperature
+            + rhoimp * alpha_e_temperature(electron_temperature)
+        )
         diamagnetic_core = (
             -v * tauIC / (corrected_rho * _parallel_norm(psi))
             * F0**2 / R**2 * element_bracket(psi, Pe)
             + v * tauIC / (corrected_rho * _parallel_norm(psi))
             * F0**3 / R**3 * dphi(Pe) * xjac
         )
-        # The physical RHS uses 2*tauIC.  In the legacy one-temperature
-        # Jacobian, however, the T tangent is coded with tauIC; retain that
-        # convention explicitly without changing the RHS or other tangents.
         B += 2 * diamagnetic_core
-        single_temperature_tangent_B += diamagnetic_core
     if include_runaway_coupling:
         runaway = -v * eta(thermal, rho, rhoimp) * aux_jre_ind / R * xjac
         B += runaway
-        single_temperature_tangent_B += runaway
     A = v * psi / R * xjac
-    overrides = {T: single_temperature_tangent_B} if not with_TiTe else {}
-    return EvolutionEquation(
-        "model600_induction", v, A, B,
-        amat_variation_overrides=overrides,
-    )
+    # The one-temperature electron temperature Te0 = T0/2 is carried by the
+    # residual itself, so the temperature column needs no tangent override.
+    return EvolutionEquation("model600_induction", v, A, B)
 
 
 def current_constraint_equation_zj():
@@ -254,21 +265,29 @@ def _poloidal_cross(left, right):
 
 
 def _diamagnetic_pressure(*, with_TiTe=False, include_impurities=False):
-    """Ion pressure used by the diamagnetic momentum terms."""
+    """Ion pressure used by the diamagnetic momentum terms.
 
-    ion_temperature = Ti if with_TiTe else T
+    ``construct_pressure`` builds Pi0 from the ion temperature and the ion
+    impurity coefficient in both temperature models.  The one-temperature
+    model evolves the total temperature and supplies Ti0 = T0/2, so the ion
+    temperature is half of the evolved field there.  ``alpha_i`` carries no
+    temperature dependence in either model.
+    """
+
+    ion_temperature = Ti if with_TiTe else T / 2
     pressure = rho * ion_temperature
     if include_impurities:
-        impurity_alpha = alpha_i if with_TiTe else alpha_imp
-        pressure += rhoimp * impurity_alpha * ion_temperature
+        pressure += rhoimp * alpha_i_state() * ion_temperature
     return pressure
 
 
 def _diamagnetic_viscosity(*, with_TiTe=False, include_impurities=False):
     """Return the externally supplied model-600 ``W_dia`` coefficient."""
 
+    # W_dia is built from the ion pressure only, so it carries no explicit
+    # electron-temperature dependence.
     if with_TiTe:
-        return W_dia_two(rho, Ti, Te)
+        return W_dia_two(rho, Ti)
     return W_dia_single(rho, T)
 
 
@@ -306,17 +325,17 @@ def momentum_equation_2(
         pressure_tangent = rho * (Ti + Te)
         if include_impurities:
             pressure += rhoimp * (
-                alpha_i * Ti + alpha_e_pressure(Te) * Te
+                alpha_i_state() * Ti + alpha_e_temperature(Te)
             )
             pressure_tangent += rhoimp * (
-                alpha_i * Ti + alpha_e_pressure(Te)
+                alpha_i_state() * Ti + alpha_e_bis_state(Te)
             )
     else:
         pressure = rho * T
         pressure_tangent = pressure
         if include_impurities:
-            pressure += rhoimp * alpha_imp_pressure(T) * T
-            pressure_tangent += rhoimp * alpha_imp_pressure(T)
+            pressure += rhoimp * alpha_imp_temperature(T)
+            pressure_tangent += rhoimp * alpha_imp_bis_state(T)
     rho_hat = _rho_hat()
     grad_v = grad(v)
     grad_omega = grad(omega)
@@ -362,17 +381,20 @@ def momentum_equation_2(
         W_dia = _diamagnetic_viscosity(
             with_TiTe=with_TiTe, include_impurities=include_impurities
         )
-        diamagnetic = (
-            -v * tauIC * 2 * R**4 * element_bracket(pi, omega)
-            -tauIC * 2 * R**3 * dZ(pi) * dot(grad_v, grad(u)) * xjac
-            -v * tauIC * 2 * R**4 * (
-                dR(dZ(u)) * (dR(dR(pi)) - dZ(dZ(pi)))
-                - dR(dZ(pi)) * (dR(dR(u)) - dZ(dZ(u)))
-            ) * xjac
-        )
+        def diamagnetic_from(pressure):
+            return (
+                -v * tauIC * 2 * R**4 * element_bracket(pressure, omega)
+                -tauIC * 2 * R**3 * dZ(pressure) * dot(grad_v, grad(u)) * xjac
+                -v * tauIC * 2 * R**4 * (
+                    dR(dZ(u)) * (dR(dR(pressure)) - dZ(dZ(pressure)))
+                    - dR(dZ(pressure)) * (dR(dR(u)) - dZ(dZ(u)))
+                ) * xjac
+            )
+
+        diamagnetic = diamagnetic_from(pi)
         diamagnetic_viscosity = (
             dvisco_state(thermal) * R * W_dia
-            * dot(grad(Ti if with_TiTe else T), grad_v) * xjac
+            * dot(grad(Ti if with_TiTe else T / 2), grad_v) * xjac
             + visco(thermal) * R * W_dia * lap_v * xjac
         )
         B += diamagnetic + diamagnetic_viscosity
@@ -417,51 +439,63 @@ def momentum_equation_2(
         )
     if include_tgnum:
         tstep = coefficient("tstep")
-        # The source splits each TGNUM product into one active and one
-        # background bracket.  Preserve that split explicitly: differentiating
-        # both brackets at once creates spurious products of two trial
-        # velocities and loses cross terms such as
-        # ``v_y*u0_x*u_y*w0_x``.
+        # The Taylor-Galerkin residual is a single product of two poloidal
+        # brackets per contribution.  The Fortran Jacobian writes the two
+        # summands of the product rule separately, which is exactly what the
+        # directional derivative of this compact form returns; writing the
+        # residual itself in split form would count it twice and would double
+        # the omega and density tangents.
         velocity_cross = _poloidal_cross(v, u)
-        velocity_cross_background = _poloidal_cross(v, freeze(u))
-        background_cross = _poloidal_cross(omega, u)
-        background_cross_background = _poloidal_cross(omega, freeze(u))
-        rho_background_cross = _poloidal_cross(rho_hat, u)
-        rho_background_cross_background = _poloidal_cross(rho_hat, freeze(u))
         tgnum = (
             -tgnum_u * sp.Rational(1, 4) * rho_hat * R**3
-            * background_cross * velocity_cross_background * xjac * tstep
-            -tgnum_u * sp.Rational(1, 4) * rho_hat * R**3
-            * background_cross_background * velocity_cross * xjac * tstep
+            * _poloidal_cross(omega, u) * velocity_cross * xjac * tstep
             -tgnum_u * sp.Rational(1, 4) * omega * R**3
-            * rho_background_cross * velocity_cross_background * xjac * tstep
-            * fact_conservative_u
-            -tgnum_u * sp.Rational(1, 4) * omega * R**3
-            * rho_background_cross_background * velocity_cross * xjac * tstep
+            * _poloidal_cross(rho_hat, u) * velocity_cross * xjac * tstep
             * fact_conservative_u
         )
         B += tgnum
     if include_neo:
         grad_psi = grad(psi)
         grad_u = grad(u)
-        grad_pi = grad(
-            _diamagnetic_pressure(
-                with_TiTe=with_TiTe, include_impurities=include_impurities
-            )
-        )
-        grad_ti = grad(Ti)
+        # JOREK uses the common-temperature pressure in the one-temperature
+        # branch, while the two-temperature branch uses the ion pressure and
+        # an additional ion-temperature contribution.  Keeping this choice
+        # explicit is important: the NEO tangent is formed from the same
+        # branch-specific residual, not from a universally doubled term.
+        if with_TiTe:
+            # The NEO work variable ``Pi0`` in JOREK is the main-ion pressure
+            # ``r0*Ti0``.  Impurity pressure enters the separate impurity
+            # extensions, not this NEO force, even when those extensions are
+            # enabled for the surrounding momentum equation.
+            grad_pi = grad(rho * Ti)
+            grad_ti = grad(Ti)
+            neo_temperature_factor = sp.Integer(2)
+        else:
+            grad_pi = grad(rho * T)
+            grad_ti = grad(T)
+            # The residual uses the same factor-two diamagnetic pressure
+            # convention as the source NEO RHS.  The one-temperature AMAT
+            # override below adjusts only the temperature tangent to the
+            # legacy undoubled form used by the element routine.
+            neo_temperature_factor = sp.Integer(2)
         btheta2 = (grad_psi[0]**2 + grad_psi[1]**2) / R**2
         neo_force = (
             rho * dot(grad_psi, grad_u)
-            +tauIC * 2 * dot(grad_psi, grad_pi)
-            +aki_neo_prof * tauIC * 2 * rho * dot(grad_psi, grad_ti)
+            +tauIC * neo_temperature_factor * dot(grad_psi, grad_pi)
+            +aki_neo_prof * tauIC * neo_temperature_factor
+            * rho * dot(grad_psi, grad_ti)
             -rho * vpar * btheta2
         )
-        B += (
-            amu_neo_prof * _parallel_norm(psi)
+        neo_contribution = (
+            # ``BB2`` is a work variable in the element routine and is frozen
+            # in the Newton tangent.  The poloidal ``Btheta2`` factor is
+            # differentiated separately below, but the numerator must not
+            # contribute a ``BB2_psi`` variation.
+            amu_neo_prof * _parallel_norm(freeze(psi))
             / (btheta2 + epsil)**2
             * dot(grad_psi, grad_v) * neo_force * R * xjac
         )
+        B += neo_contribution
     # The element routine uses the corrected density ``r0_corr`` in the
     # velocity mass matrix.  Keep the correction evaluated at the current
     # state, while freezing its density argument for the tangent; this gives
@@ -473,21 +507,16 @@ def momentum_equation_2(
     # rather than B; omitting it loses the ``rho`` and ``rho_corr`` terms in
     # the u/u and u/rho blocks.
     if include_conservative:
-        A += -fact_conservative_u * R**3 * rho * dot(grad(v), grad(u)) * xjac
-    # The legacy one-temperature element tangent uses the undoubled
-    # diamagnetic contribution for the temperature column, while the residual
-    # (and the other columns) retain the physical factor two.
-    overrides = {}
-    if include_impurities:
-        tangent_B = B - pressure_term + pressure_tangent_term
-        if with_TiTe:
-            overrides[Te] = tangent_B
-        else:
-            overrides[T] = tangent_B
-    if not with_TiTe and include_diamagnetic:
-        overrides[T] = overrides.get(T, B) - sp.Rational(1, 2) * (
-            diamagnetic
+        # JOREK's conservative history contribution is evaluated with the
+        # background velocity.  It contributes to the rho-history tangent,
+        # but not to amat(var_u,var_u).
+        A += (
+            -fact_conservative_u * R**3 * rho
+            * dot(grad(v), grad(freeze(u))) * xjac
         )
+    # The one-temperature ion temperature Ti0 = T0/2 is now carried by the
+    # residual itself, so the temperature column needs no tangent override.
+    overrides = {}
     return EvolutionEquation(
         "model600_momentum",
         v,

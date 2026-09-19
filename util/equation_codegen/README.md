@@ -79,6 +79,61 @@ The available selections are `psi`, `u`, `zj`, and `w`. Repeat
 `--equation` to select more than one row. If no selection is supplied, all
 four rows are exported.
 
+To compare the two reports block by block instead of line by line:
+
+```bash
+.venv/bin/python examples/diff_model600_reports.py
+.venv/bin/python examples/diff_model600_reports.py --quiet   # verdicts only
+```
+
+Each assignment block is compared as a multiset of monomials, and a block that
+differs is printed together with the algebraic residual `source-generated`.
+Reordering alone therefore does not show up as a difference.
+
+## Temperature conventions
+
+The element routine builds every pressure in `construct_pressure`, which is
+written once for both temperature models and always uses the species
+temperatures `Ti0`/`Te0` and the per-species impurity coefficients `alpha_i`,
+`alpha_e` and `alpha_e_bis`. The one-temperature model evolves the *total*
+temperature and enters that routine with
+
+```
+Ti0 = Te0 = T0/2
+```
+
+so a single-species temperature is half of the evolved field, and the stored
+one-temperature closure values are the means
+
+```
+alpha_imp     = (alpha_i + alpha_e)/2
+alpha_imp_bis = (alpha_i + alpha_e_bis)/2
+alpha_imp_tri = alpha_e_tri/4
+```
+
+The comparison therefore expands both reports in the two-species basis. The
+DSL follows the same convention: `_diamagnetic_pressure` and the induction
+equation's electron pressure use `T/2` in the one-temperature branch. This
+replaced two earlier "legacy tangent" overrides that reproduced JOREK's
+factor of one half by hand; that half is physical, not a legacy quirk.
+
+## Known JOREK differences
+
+With the conventions above, every `psi`, `u`, `zj` and `w` source term is
+reproduced by the generator, and 51 of the 61 exported assignment blocks are
+identical. The remaining 10 are terms the generator produces and the element
+routine does not, or coefficients that disagree. They are recorded, with their
+suggested Fortran fixes, in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
+
+1. the impurity part of the ion pressure is not differentiated in the
+   diamagnetic momentum terms (`amat(var_u,var_Ti)`, `amat(var_u,var_T)`,
+   `amat(var_u,var_rhoimp)`);
+2. the impurity part of the electron pressure is not differentiated in the
+   induction equation (`amat(var_psi,var_Te)`, `amat_n(var_psi,var_Te)`,
+   `amat(var_psi,var_rhoimp)`);
+3. the one-temperature `amat(var_u,var_T)` diamagnetic-viscosity tangent is a
+   factor two too large.
+
 Assignments and terms follow their order in
 `models/model600/mod_elt_matrix_fft.f90`. A source term that is not available
 from the equation generator has an empty line at the same position in the

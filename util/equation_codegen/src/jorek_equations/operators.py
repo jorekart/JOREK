@@ -142,6 +142,12 @@ def expand_derivatives(expression):
         if isinstance(node, SpatialDerivative):
             inner = expand(node.expression)
             coordinate = node.coordinate
+            if inner.is_Number:
+                # A numeric factor (such as the 1/2 in the one-temperature
+                # ion temperature Ti0 = T0/2) is constant in space.  Without
+                # this the product rule below emits a spurious derivative of
+                # that number.
+                return sp.S.Zero
             if isinstance(inner, sp.Add):
                 return sp.Add(*(expand(SpatialDerivative(term, coordinate))
                                 for term in inner.args))
