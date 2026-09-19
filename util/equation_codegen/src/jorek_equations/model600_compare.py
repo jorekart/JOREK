@@ -643,9 +643,11 @@ def _normalize_model600_text(
         expression,
         flags=re.I,
     )
+    # ``delta_g(mp,var_X,ms,mt)`` is the previous Newton increment of field X.
+    # Give every field the same short spelling the DSL prints.
     expression = re.sub(
-        r"delta_g\(\s*mp\s*,\s*var_psi\s*,\s*ms\s*,\s*mt\s*\)",
-        "delta_psi",
+        r"delta_g\s*\(\s*mp\s*,\s*var_([a-z0-9_]+)\s*,\s*ms\s*,\s*mt\s*\)",
+        r"delta_\1",
         expression,
         flags=re.I,
     )
@@ -747,13 +749,19 @@ def _normalize_model600_text(
     p0 = "({}+{})".format(pi0, pe0)
     p0_derivatives = {
         key: "({}+{})".format(pi_derivatives[key], pe_derivatives[key])
-        for key in ("s", "t")
+        for key in ("s", "t", "p")
     }
     # ``sqrt`` is the only Fortran intrinsic appearing in the exported volume
     # terms.  Rewrite it as a power so the expression parser needs no function
     # table.
     expression = re.sub(
         r"\bsqrt\s*\(([^()]*)\)", r"((\1)**(1/2))", expression, flags=re.I,
+    )
+    # Fortran is case insensitive; the density and parallel-velocity blocks
+    # spell the parallel-velocity trial function ``Vpar`` while the DSL prints
+    # ``vpar``.  ``Vpar0`` is covered by its own alias below.
+    expression = re.sub(
+        r"\bVpar(_[a-z]+)?\b", r"vpar\1", expression, flags=re.I,
     )
     aliases = {
         "BB2": "((F0**2+ps0_x**2+ps0_y**2)/BigR**2)",
@@ -765,12 +773,23 @@ def _normalize_model600_text(
         "Bgrad_rhoimp_psi": "((rhoimp0_x*psi_y-rhoimp0_y*psi_x)/BigR)",
         "Bgrad_rhoimp_rhoimp": "((rhoimp_x*ps0_y-rhoimp_y*ps0_x)/BigR)",
         "Bgrad_rhoimp_rhoimp_n": "(F0*rhoimp_p/BigR**2)",
+        # Parallel-velocity work values.
+        "Bgrad_vpar": "((F0*vpar0_p/BigR+vpar0_x*ps0_y-vpar0_y*ps0_x)/BigR)",
+        "Bgrad_vpar_psi": "((vpar0_x*psi_y-vpar0_y*psi_x)/BigR)",
+        "Bgrad_vpar_vpar": "((vpar_x*ps0_y-vpar_y*ps0_x)/BigR)",
+        # Prescribed rotation profile: a flux function whose flux derivative
+        # is stored as ``dV_dpsi_source``.
+        "Vt0_x": "(dV_dpsi_source*ps0_x)",
+        "Vt0_y": "(dV_dpsi_source*ps0_y)",
+        "Vt_x_psi": "(dV_dpsi_source*psi_x)",
+        "Vt_y_psi": "(dV_dpsi_source*psi_y)",
+        # Fortran is case insensitive: amat_n(var_vpar,var_Ti) spells the
+        # background density ``R0``.
+        "R0": "r0",
         "Btheta2": "((ps0_x**2+ps0_y**2)/BigR**2)",
         "Btheta2_psi": "(2*(psi_x*ps0_x+psi_y*ps0_y)/BigR**2)",
         "Vpar0": "vpar0",
-        # Fortran is case insensitive; the density block spells the parallel
-        # velocity trial function ``Vpar`` while the DSL prints ``vpar``.
-        "Vpar": "vpar",
+
         "Pe0": pe0,
         "Pe0_s": pe_derivatives["s"],
         "Pe0_t": pe_derivatives["t"],
@@ -791,6 +810,7 @@ def _normalize_model600_text(
         "P0": p0,
         "P0_s": p0_derivatives["s"],
         "P0_t": p0_derivatives["t"],
+        "P0_p": p0_derivatives["p"],
     }
     for name, replacement in aliases.items():
         expression = re.sub(

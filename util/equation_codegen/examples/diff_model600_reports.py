@@ -44,6 +44,60 @@ def read_blocks(path):
     return blocks
 
 
+def to_element_basis(expression):
+    """Rewrite both coordinate spellings of a poloidal bracket into one basis.
+
+    The element routine writes the same antisymmetric product either as
+    ``a_s*b_t - a_t*b_s`` or as ``xjac*(a_x*b_y - a_y*b_x)``, and it is not
+    always consistent between a residual and its own tangent.  Expanding every
+    ``_s``/``_t`` derivative through the chain rule,
+
+        f_s = x_s*f_x + y_s*f_y,   f_t = x_t*f_x + y_t*f_y,
+        xjac = x_s*y_t - x_t*y_s,
+
+    maps both spellings onto the same polynomial, so a residual that vanishes
+    in this basis means the two sides carry the same term.
+    """
+
+    x_s, x_t, y_s, y_t = sp.symbols("x_s x_t y_s y_t")
+    replacements = {sp.Symbol("xjac"): x_s * y_t - x_t * y_s}
+    for symbol in expression.free_symbols:
+        name = str(symbol)
+        if name in ("x_s", "x_t", "y_s", "y_t", "xjac") or name.startswith("var_"):
+            continue
+        if name.endswith("_s"):
+            replacements[symbol] = (
+                x_s * sp.Symbol(name[:-2] + "_x") + y_s * sp.Symbol(name[:-2] + "_y")
+            )
+        elif name.endswith("_t"):
+            replacements[symbol] = (
+                x_t * sp.Symbol(name[:-2] + "_x") + y_t * sp.Symbol(name[:-2] + "_y")
+            )
+    return sp.expand(expression.xreplace(replacements))
+
+
+def to_physical(expression):
+    """Render a residual with a single spelling for poloidal derivatives.
+
+    Specialising the element map to ``x_s = y_t = 1``, ``x_t = y_s = 0`` makes
+    ``f_s`` and ``f_t`` coincide with ``f_x`` and ``f_y`` and ``xjac`` with 1,
+    so a residual printed this way is readable and free of the (s,t)/(R,Z)
+    bookkeeping.  The verdict is always taken in the full element basis; this
+    is only for display.
+    """
+
+    replacements = {sp.Symbol("xjac"): sp.Integer(1)}
+    for symbol in expression.free_symbols:
+        name = str(symbol)
+        if name in ("xjac",) or name.startswith("var_"):
+            continue
+        if name.endswith("_s"):
+            replacements[symbol] = sp.Symbol(name[:-2] + "_x")
+        elif name.endswith("_t"):
+            replacements[symbol] = sp.Symbol(name[:-2] + "_y")
+    return sp.expand(expression.xreplace(replacements))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     reports = PROJECT_ROOT / "reports"
@@ -65,14 +119,54 @@ def main():
         if not source_only and not generated_only:
             print("OK   {}  ({} terms)".format(label, len(source.get(key, ()))))
             continue
+        def _sum(terms):
+            """Sum the parsable terms, listing the ones that are not.
+
+            A source line the exporter could not expand is copied into the
+            report verbatim; it is not a SymPy expression.
+            """
+
+            total = sp.S.Zero
+            unparsed = []
+            for term in terms:
+                # Parse every identifier as a plain symbol: several JOREK work
+                # variables (``zeta``, ``gamma``, ``beta``, ...) collide with
+                # SymPy's own function names.
+                locals_ = {
+                    name: sp.Symbol(name)
+                    for name in re.findall(r"[A-Za-z_][A-Za-z_0-9]*", term)
+                    if name != "sqrt"
+                }
+                try:
+                    total += sp.sympify(term, locals=locals_, evaluate=True)
+                except Exception:
+                    unparsed.append(term)
+            return total, unparsed
+
+        source_total, source_unparsed = _sum(source_only.elements())
+        generated_total, generated_unparsed = _sum(generated_only.elements())
+        residual = sp.expand(source_total - generated_total)
+        # The verdict is taken in the element basis, where the two spellings
+        # of a poloidal bracket coincide; anything left there is a genuine
+        # difference.
+        residual_basis = to_element_basis(residual)
+        if residual != 0 and residual_basis == 0:
+            # The two sides carry the same physics; the element routine simply
+            # wrote a poloidal bracket in (s,t) where the generator wrote it
+            # in (R,Z), or the other way round.
+            print("SAME {}: {} line(s), identical up to the (s,t)/(R,Z) "
+                  "spelling of a poloidal bracket".format(
+                      label, sum(source_only.values()),
+                  ))
+            continue
         differing += 1
-        residual = sp.expand(
-            sum(sp.sympify(term) for term in source_only.elements())
-            - sum(sp.sympify(term) for term in generated_only.elements())
-        )
-        print("DIFF {}: source-only={} generated-only={} residual terms={}".format(
+        print("DIFF {}: source-only={} generated-only={} residual terms (element basis)={}{}".format(
             label, sum(source_only.values()), sum(generated_only.values()),
-            0 if residual == 0 else len(sp.Add.make_args(residual)),
+            0 if residual_basis == 0 else len(sp.Add.make_args(residual_basis)),
+            "" if not (source_unparsed or generated_unparsed)
+            else " (unparsed: {})".format(
+                len(source_unparsed) + len(generated_unparsed)
+            ),
         ))
         if args.quiet:
             continue
@@ -80,11 +174,17 @@ def main():
             print("   source    {}".format(term))
         for term in sorted(generated_only.elements()):
             print("   generated {}".format(term))
-        if residual == 0:
-            print("   residual: 0 (the block agrees; only the ordering differs)")
+        # Print the residual with one spelling for the poloidal derivatives,
+        # so that lines differing only in (s,t) versus (R,Z) cancel here as
+        # they do in the verdict above.
+        shown = to_physical(residual)
+        if shown == 0:
+            print("   residual: 0 in the displayed basis; the difference is "
+                  "visible only in the element metric")
         else:
-            print("   residual (source-generated):")
-            for term in sp.Add.make_args(residual):
+            print("   residual (source-generated, with f_s->f_x, f_t->f_y, "
+                  "xjac->1):")
+            for term in sp.Add.make_args(shown):
                 print("     {}".format(term))
     print("\nBlocks with differences: {} / {}".format(differing, len(keys)))
     return 1 if differing else 0

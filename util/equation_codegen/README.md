@@ -43,7 +43,8 @@ algebraic difference.
 ## Model 600 reports
 
 The integrated model-600 checker validates the currently implemented `psi`,
-`u`, `zj`, `w` and `rho` rows and writes two line-aligned Markdown reports:
+`u`, `zj`, `w`, `rho` and `vpar` rows and writes two line-aligned Markdown
+reports:
 
 ```bash
 .venv/bin/python examples/check_model600_integrated.py
@@ -51,7 +52,7 @@ meld reports/model600_fortran_terms.md reports/model600_generated_terms.md
 ```
 
 The integrated script accepts the same selector, for example
-`--equation psi`; with no selector it exports all five rows.
+`--equation psi`; with no selector it exports all six rows.
 
 To generate only the reports, without running the pass/fail checks:
 
@@ -75,9 +76,9 @@ To inspect only the factored perpendicular-momentum RHS:
 This focused mode preserves the Fortran outer-term structure and does not
 build the expensive `u` AMAT columns.
 
-The available selections are `psi`, `u`, `zj`, `w` and `rho`. Repeat
+The available selections are `psi`, `u`, `zj`, `w`, `rho` and `vpar`. Repeat
 `--equation` to select more than one row. If no selection is supplied, all
-five rows are exported.
+six rows are exported.
 
 To compare the two reports block by block instead of line by line:
 
@@ -88,7 +89,11 @@ To compare the two reports block by block instead of line by line:
 
 Each assignment block is compared as a multiset of monomials, and a block that
 differs is printed together with the algebraic residual `source-generated`.
-Reordering alone therefore does not show up as a difference.
+Reordering alone therefore does not show up as a difference. The residual is
+taken after rewriting every `_s`/`_t` derivative through the chain rule, so a
+poloidal bracket written `a_s*b_t - a_t*b_s` in one report and
+`xjac*(a_x*b_y - a_y*b_x)` in the other cancels; such a block is reported as
+`SAME` rather than `DIFF`.
 
 ## Temperature conventions
 
@@ -119,9 +124,9 @@ factor of one half by hand; that half is physical, not a legacy quirk.
 
 ## Known JOREK differences
 
-With the conventions above, every `psi`, `u`, `zj`, `w` and `rho` source term
-is reproduced by the generator, and 81 of the 100 exported assignment blocks
-are identical. The remaining 19 are terms the generator produces and the element
+With the conventions above, every `psi`, `u`, `zj`, `w`, `rho` and `vpar`
+source term is reproduced by the generator, and 105 of the 138 exported
+assignment blocks are identical. The remaining 33 are terms the generator produces and the element
 routine does not, or coefficients that disagree. They are recorded, with their
 suggested Fortran fixes, in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
 
@@ -140,7 +145,31 @@ suggested Fortran fixes, in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
 5. the temperature dependence of `alpha_e` is not differentiated in the
    density ionization/recombination sources (`amat(var_rho,var_Te)`,
    `amat(var_rho,var_T)`), although the momentum equation does differentiate
-   it in the same sources.
+   it in the same sources;
+6. the parallel-velocity time term is linearized inconsistently: the `vpar`
+   column and the history keep only the toroidal part of `B**2`, and the
+   `psi` column carries half of its variation;
+7. `BB2` is not differentiated in the `tgnum_vpar` tangent
+   (`amat(var_vpar,var_psi)`, `amat_k(var_vpar,var_psi)`);
+8. the toroidal channel of the parallel-parallel viscosity tangent is missing
+   (`amat_n(var_vpar,var_vpar)`, `amat_kn(var_vpar,var_vpar)`);
+9. the parallel-velocity inward-pinch tangent repeats the sign of its own
+   residual instead of flipping it.
+
+A source monomial and its generated counterpart are aligned on the same report
+line even when only their numeric coefficients differ, so a term the element
+routine scales differently shows up side by side in Meld rather than as a
+source line with an empty generated cell followed by an unmatched generated
+line at the end of the block.
+
+The element routine is not consistent about how it spells a poloidal bracket:
+`rhs_ij(var_vpar)` writes the parallel kinetic-energy flux as
+`a_s*b_t - a_t*b_s` while `amat(var_vpar,var_psi)` writes the very same group
+as `xjac*(a_x*b_y - a_y*b_x)`, and the two expand into different monomials.
+The parallel-velocity equation is therefore generated in both spellings and
+each assignment is aligned against whichever one its own source block uses.
+A blank cell on the generated side of the report is then a genuinely missing
+term rather than a change of coordinates.
 
 Assignments and terms follow their order in
 `models/model600/mod_elt_matrix_fft.f90`. A source term that is not available

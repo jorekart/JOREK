@@ -13,6 +13,7 @@ from .fortran import fortran
 from .model600 import (
     FIELDS,
     density_equation_rho,
+    parallel_velocity_equation_vpar,
     T,
     Te,
     current_constraint_equation_zj,
@@ -31,14 +32,14 @@ from .source_compare import parse_fortran_expression
 from .symbols import FieldRole, FieldValue, TestFunction, coefficient
 
 
-ROWS = ("psi", "u", "zj", "w", "rho")
+ROWS = ("psi", "u", "zj", "w", "rho", "vpar")
 FIELD_NAMES = {
     field: name
     for field, name in zip(FIELDS, ("psi", "u", "zj", "w", "rho", "T", "vpar", "Ti", "Te", "rhon", "rhoimp"))
 }
 ASSIGNMENT_RE = re.compile(
     r"(?P<lhs>(?:rhs_ij(?:_k)?|amat(?:_n|_k|_kn|_nn)?)\s*\(\s*"
-    r"var_(?P<row>psi|u|zj|w|rho)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
+    r"var_(?P<row>psi|u|zj|w|rho|vpar)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
     re.I,
 )
 
@@ -67,6 +68,7 @@ def _read_source_assignments(path):
     # temperature branch, and a bare ``endif`` must not accidentally change
     # the active temperature convention.
     temperature_stack = []
+    velocity_profile_branch = None
     index = 0
     while index < len(lines):
         raw = lines[index]
@@ -88,6 +90,25 @@ def _read_source_assignments(path):
                 temperature_stack[-1][1] -= 1
             else:
                 temperature_model = temperature_stack.pop()[0]
+        # ``normalized_velocity_profile`` defaults to .true.; export that
+        # branch and skip the ``else`` alternative.  These blocks contain no
+        # nested conditionals, so a single flag is enough.
+        if re.search(r"\bif\s*\(\s*normalized_velocity_profile\s*\)\s*then", lowered):
+            velocity_profile_branch = True
+            index += 1
+            continue
+        if velocity_profile_branch is not None:
+            if re.match(r"^\s*else\b(?!\s*if)", lowered):
+                velocity_profile_branch = False
+                index += 1
+                continue
+            if re.search(r"\bend\s*if\b", lowered):
+                velocity_profile_branch = None
+                index += 1
+                continue
+            if not velocity_profile_branch:
+                index += 1
+                continue
         match = ASSIGNMENT_RE.search(code)
         if match is None:
             index += 1
@@ -291,6 +312,7 @@ def _add_raw_rhs(pools, row, expression, *, previous_names=None):
 
 def _generated_pools(
     rows=ROWS, requested_lhs=None, *, include_neo=True, with_tite=None,
+    vpar_element_brackets=True,
 ):
     """Generate implemented model-600 terms for the requested rows."""
 
@@ -322,6 +344,22 @@ def _generated_pools(
                 fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
             ),
             previous_names={"rho": "delta_rho_g"},
+        )
+    if "vpar" in rows:
+        equation = parallel_velocity_equation_vpar(
+            with_TiTe=bool(with_tite),
+            element_brackets=vpar_element_brackets,
+        )
+        _add_linearized(
+            pools, "vpar",
+            equation.linearize(
+                fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
+            ),
+            previous_names={
+                "vpar": "delta_g(mp,var_vpar,ms,mt)",
+                "rho": "delta_rho_g",
+                "psi": "delta_ps",
+            },
         )
     if "zj" in rows:
         _add_linearized(
@@ -580,6 +618,7 @@ def _source_monomial_slots(assignments, generated_terms, *, temperature_model=No
                 source_monomials.append((assignment, term, None))
 
     generated_by_key = defaultdict(list)
+    generated_by_structure = defaultdict(list)
     # For a source NEO block, keep only generated NEO terms in this local
     # alignment.  The complete generated pool also contains the ordinary
     # momentum terms, which must not appear as unrelated generated-only rows
@@ -637,23 +676,38 @@ def _source_monomial_slots(assignments, generated_terms, *, temperature_model=No
                 # variable already contains the explicit background Te0.
                 term = sp.cancel(term / sp.Symbol("Te0"))
             generated_by_key[_canonical_monomial(term)].append(term)
+            generated_by_structure[_monomial_structure(term)].append(term)
 
     source_monomials = _combine_source_duplicates(
         source_monomials, generated_by_key
     )
 
+    def _take(pool, key):
+        """Pop the first unconsumed term registered under ``key``."""
+
+        while pool[key]:
+            term = pool[key].pop(0)
+            if id(term) in consumed:
+                continue
+            consumed.add(id(term))
+            return term
+        return None
+
     slots = []
-    matched_rendered = set()
+    consumed = set()
     for assignment, source_term, source_raw in source_monomials:
         if source_term is None:
             slots.append((assignment, source_raw, ""))
             continue
         source_display = _canonical_monomial(source_term)
-        key = _canonical_monomial(source_term)
-        matches = generated_by_key[key]
-        generated = _canonical_monomial(matches.pop(0)) if matches else ""
-        if generated:
-            matched_rendered.add(generated)
+        match = _take(generated_by_key, source_display)
+        if match is None:
+            # No monomial with this exact coefficient.  Fall back to the same
+            # monomial structure, so that a term the element routine scales
+            # differently is shown on the same report line as its generated
+            # counterpart instead of drifting to the end of the block.
+            match = _take(generated_by_structure, _monomial_structure(source_term))
+        generated = _canonical_monomial(match) if match is not None else ""
         slots.append((assignment, source_display, generated))
 
     # Do not hide generated-only terms.  They are emitted after the aligned
@@ -666,8 +720,10 @@ def _source_monomial_slots(assignments, generated_terms, *, temperature_model=No
         emitted = set()
         for values in generated_by_key.values():
             for term in values:
+                if id(term) in consumed:
+                    continue
                 rendered = _canonical_monomial(term)
-                if rendered in emitted or rendered in matched_rendered:
+                if rendered in emitted:
                     continue
                 emitted.add(rendered)
                 slots.append((synthetic, "", rendered))
@@ -686,7 +742,7 @@ def _unmatched_generated_blocks(rows, source_lhs, generated, temperature_model):
     for lhs, terms in generated.items():
         if lhs in source_lhs or not terms:
             continue
-        row_match = re.search(r"\(var_(psi|u|zj|w|rho)\b", lhs)
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho|vpar)\b", lhs)
         if row_match is None or row_match.group(1) not in rows:
             continue
         synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")
@@ -789,8 +845,41 @@ def _canonical_display(text, *, temperature_model=None):
     return " + ".join(_canonical_monomial(term) for term in terms)
 
 
-def _source_slots(assignments, generated, *, temperature_model=None):
+def _slot_mismatches(slots):
+    """Count report lines that are blank on one side."""
+
+    return sum(1 for _, source, generated in slots if not source or not generated)
+
+
+def _best_slots(lhs_assignments, pools, temperature_model):
+    """Align against whichever generated spelling fits the source block.
+
+    The element routine writes a poloidal bracket sometimes as
+    ``a_s*b_t - a_t*b_s`` and sometimes as ``xjac*(a_x*b_y - a_y*b_x)``, and
+    it picks differently for a residual and for one of its own tangents.  The
+    two spellings are identical, but they expand into different monomials, so
+    aligning them line by line requires using the spelling the block at hand
+    happens to use.
+    """
+
+    best = None
+    for pool in pools:
+        slots = _source_monomial_slots(
+            lhs_assignments, pool, temperature_model=temperature_model,
+        )
+        score = _slot_mismatches(slots)
+        if best is None or score < best[0]:
+            best = (score, slots)
+        if score == 0:
+            break
+    return best[1]
+
+
+def _source_slots(assignments, generated, *, temperature_model=None,
+                  generated_alternative=None):
     """Align generated monomials to source monomials in source order."""
+
+    alternative = generated_alternative or {}
 
     slots = []
     used = defaultdict(set)
@@ -870,9 +959,11 @@ def _source_slots(assignments, generated, *, temperature_model=None):
         slots = [
             slot
             for lhs, lhs_assignments in by_lhs.items()
-            for slot in _source_monomial_slots(
-                lhs_assignments, generated.get(lhs, ()),
-                temperature_model=temperature_model,
+            for slot in _best_slots(
+                lhs_assignments,
+                [generated.get(lhs, ())]
+                + ([alternative[lhs]] if lhs in alternative else []),
+                temperature_model,
             )
         ]
         slots.extend(_unmatched_generated_blocks(
@@ -973,7 +1064,7 @@ def _source_slots(assignments, generated, *, temperature_model=None):
             # Focused u-RHS reports are source-slot aligned; do not append
             # SymPy-expanded leftovers as thousands of artificial lines.
             continue
-        row_match = re.search(r"\(var_(psi|u|zj|w|rho)\b", lhs)
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho|vpar)\b", lhs)
         if row_match is None:
             continue
         synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")
@@ -1056,6 +1147,19 @@ def export_model600_markdown(
             rows, requested_lhs=requested, include_neo=include_neo,
             with_tite=with_tite,
         )
+        generated_alternative = {}
+        if "vpar" in rows:
+            # The parallel-velocity row is the one whose source assignments
+            # disagree among themselves about how to spell a poloidal
+            # bracket, so build the other spelling as well.
+            alternative_pools = _generated_pools(
+                ("vpar",), requested_lhs=requested, include_neo=include_neo,
+                with_tite=with_tite, vpar_element_brackets=False,
+            )
+            generated_alternative = {
+                lhs: terms for lhs, terms in alternative_pools.items()
+                if "var_vpar" in lhs.split(",")[0] or lhs.startswith("rhs_ij")
+            }
         if assignment_filter is not None:
             source_assignments = [
                 assignment for assignment in source_assignments
@@ -1064,8 +1168,13 @@ def export_model600_markdown(
             generated = {
                 lhs: terms for lhs, terms in generated.items() if lhs in requested
             }
+            generated_alternative = {
+                lhs: terms for lhs, terms in generated_alternative.items()
+                if lhs in requested
+            }
         slots = _source_slots(
             source_assignments, generated, temperature_model=temperature_model,
+            generated_alternative=generated_alternative,
         )
         source_sections.append(
             _render_report(

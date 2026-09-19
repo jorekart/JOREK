@@ -14,8 +14,13 @@ comparing them block by block:
 
 `diff_model600_reports.py` compares each `rhs_ij`/`amat` assignment as a
 multiset of monomials and prints the algebraic residual, so a block that only
-reorders its terms is reported as identical. At the time of writing, 81 of the
-100 exported blocks are identical; the remaining 19 are the five findings
+reorders its terms is reported as identical.  The residual is evaluated after
+rewriting every `_s`/`_t` derivative through the chain rule, because the
+element routine spells the same poloidal bracket sometimes as
+`a_s*b_t - a_t*b_s` and sometimes as `xjac*(a_x*b_y - a_y*b_x)` — even between
+a residual and its own tangent.  A block whose two sides differ only by that
+rewrite is reported as `SAME`. At the time of writing, 105 of the
+138 exported blocks are identical; the remaining 33 are the nine findings
 below. Nothing in this list has been fixed in the Fortran.
 
 Status of the five exported rows:
@@ -27,10 +32,11 @@ Status of the five exported rows:
 | `zj` | reproduced | reproduced |
 | `w` | reproduced | reproduced |
 | `rho` | reproduced | findings 1, 4 and 5 |
+| `vpar` | findings 6 and 9 | findings 4, 6, 7, 8 and 9 |
 
-Every source term of every row is reproduced by the generator. With the single
-exception of finding 3, the differences are all terms the generator produces
-and the element routine does not.
+Every source term of every row is reproduced by the generator. Apart from
+findings 3, 6 and 9, the differences are all terms the generator produces and
+the element routine does not.
 
 The NEO branch is excluded from the default reports (`--include-neo` enables
 it) and has not been audited here.
@@ -284,7 +290,12 @@ the trial flux gradient,
 (the first bracket from varying `grad(psi)` in the dot product, the second from
 varying `1/|grad(psi)|`).
 
-**Scale:** 6 monomials, in each temperature branch.
+The parallel-velocity equation advects `v_par` with the same pinch velocity
+and has the same gap: `amat(var_vpar,var_psi)` carries no pinch tangent
+either.
+
+**Scale:** 6 monomials in `amat(var_rho,var_psi)` and 6 in
+`amat(var_vpar,var_psi)`, in each temperature branch.
 
 **Note:** `V_prof_pinch`, `D_prof`, `D_prof_imp`, `D_par_local`,
 `D_par_local_imp`, `tau_sc` and `D_perp_num_psin` are profile work values that
@@ -336,6 +347,162 @@ is a state function.
 
 ---
 
+## Finding 6 — the parallel-velocity time term is linearized inconsistently
+
+**Where:** the `var_vpar` block: `rhs_ij(var_vpar)` (the `zeta` history),
+`amat(var_vpar,var_vpar)`, `amat(var_vpar,var_psi)` and
+`amat(var_vpar,var_rho)`.
+
+**What happens:** the parallel momentum density is `r0_corr*vpar*BB2*BigR`,
+with `BB2 = (F0**2 + ps0_x**2 + ps0_y**2)/BigR**2` — the same `BB2` the whole
+equation uses for its inertia, source and Taylor-Galerkin terms. Its
+linearization is implemented as three pieces that do not come from one
+functional:
+
+```fortran
+amat(var_vpar,var_vpar) = v * Vpar * r0_corr * F0**2 / BigR * xjac * (1.d0 + zeta) ...
+amat(var_vpar,var_psi)  = ... + v * r0_corr * vpar0 / BigR * (ps0_x*psi_x + ps0_y*psi_y) * xjac * (1.d0 + zeta) ...
+amat(var_vpar,var_rho)  = ... + fact_conservative_u * v * rho * vpar0 * F0**2 / BigR * xjac * (1.d0 + zeta) ...
+rhs_ij(var_vpar)        = ... + zeta * v * delta_g(mp,var_vpar,ms,mt) * r0_corr * F0**2 / BigR * xjac    &
+                              + zeta * v * r0_corr * vpar0 * (ps0_x*delta_ps_x + ps0_y*delta_ps_y) / BigR * xjac ...
+```
+
+* the `vpar` column and the `vpar` history keep only the toroidal part
+  `F0**2/BigR` of `BB2*BigR`; the poloidal part
+  `(ps0_x**2 + ps0_y**2)/BigR` is missing;
+* the `psi` column carries `(ps0_x*psi_x + ps0_y*psi_y)`, which is exactly
+  **half** of the variation of `BB2*BigR`, namely
+  `2*(ps0_x*psi_x + ps0_y*psi_y)/BigR`;
+* the conservative `fact_conservative_u` copy of the same term repeats the
+  first problem in its `rho` column and has no `psi` column at all.
+
+There is no scalar `A` whose Gateaux derivative gives these terms together:
+the mixed second derivative is not symmetric. Differentiating the implemented
+`vpar` column with respect to the flux gives zero, because `F0**2/BigR`
+carries no flux dependence, while differentiating the implemented `psi`
+column with respect to `vpar` gives
+`v*r0_corr*(ps0_x*psi_x + ps0_y*psi_y)/BigR`.
+
+Because the `zeta` history in `rhs_ij(var_vpar)` uses the same combination as
+the `(1.d0 + zeta)` mass terms, the time scheme is self-consistent; what it
+discretises, however, is not `d/dt (rho*vpar*BB2*BigR)`, which is the density
+the rest of the equation assumes (`BB2` appears in its inertia, source,
+kinetic-coupling and Taylor-Galerkin terms).
+
+**Not specific to model 600.** The same three expressions appear verbatim in
+the `var_vpar` blocks of models 303, 305, 306, 307, 401, 501 and 502, so this
+is a long-standing shared convention rather than a model-600 slip, and a fix
+would have to be applied consistently across them.
+
+**Suggested fix:** derive all four from `A = v*r0_corr*vpar*BB2*BigR*xjac`,
+that is use `BB2*BigR` in place of `F0**2/BigR` in the `vpar` and `rho`
+columns and in the history, and double the `psi` column.
+
+**Scale:** 8 residual monomials in `rhs_ij(var_vpar)`, 8 in
+`amat(var_vpar,var_psi)`, 4 in `amat(var_vpar,var_vpar)` and 4 in
+`amat(var_vpar,var_rho)`, in each temperature branch — half of them from the
+main mass term and half from its `fact_conservative_u` copy.
+
+---
+
+## Finding 7 — BB2 is not differentiated in the tgnum_vpar tangent
+
+**Where:** `amat(var_vpar,var_psi)` and `amat_k(var_vpar,var_psi)`.
+
+**What happens:** all three Taylor-Galerkin terms of the parallel-velocity
+residual carry the factor `BB2`, for example
+
+```fortran
+- tgnum_vpar * 0.25d0 * r0 * Vpar0**2 * BB2                                             &
+          * (-(ps0_s*vpar0_t - ps0_t*vpar0_s)/xjac + F0/BigR*vpar0_p) / BigR            &
+          * (-(ps0_s*v_t     - ps0_t*v_s)    /xjac)  * xjac * tstep * tstep
+```
+
+`BB2` depends on the poloidal flux, and the element routine differentiates it
+everywhere else in this equation (the `BB2_psi` terms of the inertia, source
+and kinetic-coupling contributions). The `tgnum_vpar` flux tangent, however,
+varies only the two poloidal brackets: every one of its six terms still
+carries `BB2`, never `BB2_psi`.
+
+**Suggested fix:** add, for each of the three residual terms, the
+corresponding `BB2 -> BB2_psi` copy to `amat(var_vpar,var_psi)` and
+`amat_k(var_vpar,var_psi)`.
+
+**Scale:** 84 residual monomials in `amat(var_vpar,var_psi)` and 20 in
+`amat_k(var_vpar,var_psi)`, in each temperature branch.
+
+---
+
+## Finding 8 — the toroidal channel of the parallel-parallel viscosity tangent is missing
+
+**Where:** `amat_n(var_vpar,var_vpar)` and `amat_kn(var_vpar,var_vpar)`.
+
+**What happens:** the residual term
+
+```fortran
+- visco_par_par * F0**2 / (BigR * BB2) * Bgrad_vpar * Bgrad_rho_star * xjac * tstep
+```
+
+uses the full parallel gradient
+`Bgrad_vpar = (F0/BigR*vpar0_p + vpar0_x*ps0_y - vpar0_y*ps0_x)/BigR`, but its
+trial-function counterpart is defined with the poloidal half only:
+
+```fortran
+Bgrad_vpar_vpar = ( vpar_x * ps0_y - vpar_y * ps0_x ) / BigR
+```
+
+so the `F0/BigR*vpar_p` part never reaches the Jacobian. Consequently
+`amat_n(var_vpar,var_vpar)` and `amat_kn(var_vpar,var_vpar)` carry no
+`visco_par_par` contribution at all, even though the same tangent is present
+in the `p` and `k` channels.
+
+**Suggested fix:** add a toroidal companion
+`Bgrad_vpar_vpar_n = (F0/BigR*vpar_p)/BigR` and use it in the `n` and `kn`
+channels, exactly as `Bgrad_rho_rho_n` is used in the density equation.
+
+**Scale:** 2 monomials in `amat_n(var_vpar,var_vpar)` and 1 in
+`amat_kn(var_vpar,var_vpar)`, in each temperature branch.
+
+---
+
+## Finding 9 — the parallel-velocity inward-pinch tangent has the wrong sign
+
+**Where:** `amat(var_vpar,var_rho)` and `amat(var_vpar,var_vpar)`.
+
+**What happens:** the residual contribution is
+
+```fortran
+rhs_ij(var_vpar) = rhs_ij(var_vpar) &
+    + V_prof_pinch / sqrt(psi_grad2) * (ps0_x*vpar0_x + ps0_y*vpar0_y) &
+            * r0 * v * BigR * xjac * tstep * factor(var_vpar,13)
+```
+
+and its two tangents repeat that sign:
+
+```fortran
+amat(var_vpar,var_rho)  = ... + V_prof_pinch / sqrt(psi_grad2) * (ps0_x*vpar0_x + ps0_y*vpar0_y) * rho  * v * BigR * xjac * theta * tstep
+amat(var_vpar,var_vpar) = ... + V_prof_pinch / sqrt(psi_grad2) * (ps0_x*vpar_x  + ps0_y*vpar_y ) * r0   * v * BigR * xjac * theta * tstep
+```
+
+The JOREK convention is `AMAT = -theta*tstep*dB`, so both should be negative.
+The density equation gets this right for the same pinch term: its residual
+contribution is negative and `amat(var_rho,var_rho)` is positive.
+
+**Suggested fix:** flip the sign of both `amat(var_vpar,...)` pinch terms.
+
+**Note:** the residual sign itself also deserves a look. With
+`V_pinch = -V_prof_pinch * grad(psi)/|grad(psi)|` as documented in the source
+comment, the advection `rho * V_pinch . grad(v_par)` is
+`-V_prof_pinch/|grad(psi)| * rho * grad(psi).grad(v_par)`, i.e. negative,
+while the assembled term is positive. The generator follows the assembled
+residual, so this note is a reading of the source comment rather than a
+report difference.
+
+**Scale:** 2 monomials in each of `amat(var_vpar,var_rho)` and
+`amat(var_vpar,var_vpar)`, in each temperature branch.
+
+---
+
 ## Reproducing
 
 ```bash
@@ -345,8 +512,33 @@ python3 -m venv .venv && .venv/bin/python -m pip install -e .
 .venv/bin/python examples/diff_model600_reports.py
 ```
 
-Every line that `diff_model600_reports.py` prints as `generated` and not as
-`source` is a term the linearization produces and the element routine does
-not. A block reported with both `source` and `generated` lines and a non-zero
-residual is a coefficient disagreement; `amat(var_u,var_T)` is currently the
-only one.
+The **residual** printed under a `DIFF` block is the authoritative difference.
+It is computed in the element basis, where the two spellings of a poloidal
+bracket coincide, and displayed with `f_s -> f_x`, `f_t -> f_y`, `xjac -> 1`
+so that it reads as a physical expression. Every line that reaches the
+residual with a negative sign is a term the linearization produces and the
+element routine does not.
+
+In the aligned Markdown reports, a blank cell on the generated side is now a
+genuine missing term: across all 138 blocks the only source lines without a
+generated counterpart are the 7 of finding 3, the 6 of finding 6 and the 4 of
+finding 9.
+
+Residual composition of the parallel-velocity blocks, for orientation:
+
+| Block | residual lines | by finding |
+|---|---:|---|
+| `rhs_ij(var_vpar)` | 8 | 6 |
+| `amat(var_vpar,var_psi)` | 98 | 7 (84), 4/9 (6), 6 (8) |
+| `amat_k(var_vpar,var_psi)` | 20 | 7 |
+| `amat(var_vpar,var_rho)` | 6 | 6 (4), 9 (2) |
+| `amat(var_vpar,var_vpar)` | 6 | 6 (4), 9 (2) |
+| `amat_n(var_vpar,var_vpar)` | 2 | 8 |
+| `amat_kn(var_vpar,var_vpar)` | 1 | 8 | A block reported with both `source` and `generated` lines and a non-zero
+residual is a coefficient disagreement: `amat(var_u,var_T)` (finding 3), the
+four `var_vpar` mass blocks (finding 6) and the two `var_vpar` pinch blocks
+(finding 9).
+
+A block reported as `SAME` differs only in whether a poloidal bracket is
+written in element or physical coordinates; `amat(var_vpar,var_psi)` still
+contains 16 such lines mixed in with its genuine differences.

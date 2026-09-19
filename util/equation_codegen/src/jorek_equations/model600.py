@@ -570,6 +570,21 @@ def _b_dot_grad(value, flux=psi):
     ) / R
 
 
+def _b_dot_grad_element(value, flux=psi):
+    """``_b_dot_grad`` written with the element-coordinate poloidal bracket.
+
+    The two forms are identical, because ``a_s b_t - a_t b_s`` equals
+    ``xjac*(a_x b_y - a_y b_x)``.  Which one to use is purely a matter of
+    matching the spelling of the element routine, which writes the parallel
+    pressure gradient, the parallel kinetic-energy flux and the ``tgnum_vpar``
+    terms in element coordinates.
+    """
+
+    return (
+        F0 / R * dphi(value) - element_bracket(flux, value) / xjac
+    ) / R
+
+
 def _perpendicular_diffusion(test, value):
     """Weak perpendicular diffusion operator, including its toroidal part."""
 
@@ -657,3 +672,141 @@ def density_equation_rho(
         )
     A = v * rho * R * xjac
     return EvolutionEquation("model600_density", v, A, B, kind="evolution")
+
+
+# ---------------------------------------------------------------------------
+# Parallel velocity equation (``var_vpar``)
+# ---------------------------------------------------------------------------
+
+visco_par = coefficient("visco_par")
+visco_par_sc_num = coefficient("visco_par_sc_num")
+visco_par_num = coefficient("visco_par_num")
+visco_par_par = coefficient("visco_par_par")
+tgnum_vpar = coefficient("tgnum_vpar")
+aux_mom_par0 = coefficient("aux_mom_par0")
+
+# Prescribed rotation profile subtracted from the parallel-velocity gradient
+# by the perpendicular parallel viscosity.  It is a flux function whose flux
+# derivative the element routine stores as the frozen profile work value
+# ``dV_dpsi_source``:  ``Vt0_x = dV_dpsi_source*ps0_x`` and
+# ``Vt_x_psi = dV_dpsi_source*psi_x``.  Only the flux is varied, so
+# ``grad(Vt) = dV_dpsi_source*grad(psi)`` is the faithful form.
+dV_dpsi_source = coefficient("dV_dpsi_source")
+
+
+def parallel_velocity_equation_vpar(
+    *,
+    with_TiTe=False,
+    element_brackets=True,
+    include_conservative=True,
+    include_tgnum=True,
+    include_neutrals=True,
+    include_impurities=True,
+    include_sources=True,
+    include_pinch=True,
+    include_auxiliary=True,
+):
+    """Return the model-600 parallel-velocity equation for ``var_vpar``.
+
+    The perpendicular parallel viscosity follows the default
+    ``normalized_velocity_profile = .true.`` branch of the element routine.
+
+    ``element_brackets`` selects how the poloidal bracket of the parallel
+    kinetic-energy flux is spelled.  The two forms are mathematically
+    identical, but the element routine writes this particular group in element
+    coordinates in ``rhs_ij(var_vpar)`` and in the ``rho`` and ``vpar``
+    columns and in physical coordinates in ``amat(var_vpar,var_psi)``, so the
+    exporter builds both and aligns each assignment against the spelling it
+    happens to use.  The pressure gradient and the Taylor-Galerkin terms are
+    written in element coordinates throughout and need no such switch.
+    """
+
+    v = test_function("v")
+    thermal = Te if with_TiTe else T
+    alpha_e_value = alpha_e_state(thermal)
+    sion_rate = Sion_rate(thermal)
+    srec_rate = Srec_rate(thermal)
+    bb2 = _parallel_norm(psi)
+    if with_TiTe:
+        pressure = rho * (Ti + Te)
+        if include_impurities:
+            pressure += rhoimp * (
+                alpha_i_state() * Ti + alpha_e_temperature(Te)
+            )
+    else:
+        pressure = rho * T
+        if include_impurities:
+            pressure += rhoimp * alpha_imp_temperature(T)
+    rho_hat = _rho_hat()
+    visco_par_eff = visco_par + visco_par_sc_num * tau_sc
+    kinetic_gradient = (
+        _b_dot_grad_element if element_brackets else _b_dot_grad
+    )
+    rotation_shear = tuple(
+        parallel - dV_dpsi_source * flux
+        for parallel, flux in zip(grad(vpar), grad(psi))
+    )
+
+    B = (
+        # Parallel pressure gradient.
+        -v * R * _b_dot_grad_element(pressure) * xjac
+        # Parallel advection of the kinetic energy, 0.5*v_par**2*B**2.
+        + sp.Rational(1, 2) * vpar**2 * bb2 * R * xjac
+        * (rho * kinetic_gradient(v) + v * kinetic_gradient(rho))
+        # Numerical and physical parallel viscosities.
+        - visco_par_num * _laplacian(v) * _laplacian(vpar) * R * xjac
+        - visco_par_par * F0**2 / (R * bb2)
+        * _b_dot_grad(vpar) * _b_dot_grad(v) * xjac
+        - visco_par_eff * dot(grad(v), rotation_shear) * R * xjac
+    )
+    if include_sources:
+        B += (
+            -v * (
+                particle_source + source_pellet + source_bg_drift
+                + source_imp_drift
+            ) * vpar * bb2 * R * xjac * (1 - fact_conservative_u)
+        )
+    if include_conservative:
+        # -(d_t rho + div(rho v)) v_par B**2 R; the d_t rho part belongs to A.
+        B += fact_conservative_u * v * vpar * bb2 * xjac * (
+            _poloidal_cross(rho_hat, u) - R * _b_dot_grad(rho * vpar)
+        )
+    if include_neutrals:
+        electron_density = rho + alpha_e_value * rhoimp
+        B += (1 - delta_n_convection) * (
+            -v * electron_density * rhon * sion_rate * vpar * bb2 * R * xjac
+            + v * electron_density * (rho - rhoimp) * srec_rate
+            * vpar * bb2 * R * xjac
+        )
+    if include_tgnum:
+        timestep = coefficient("tstep")
+        B += (
+            -tgnum_vpar * sp.Rational(1, 4) * rho * vpar**2 * bb2 * R
+            * _b_dot_grad_element(vpar) * _b_dot_grad_element(v) * xjac * timestep
+            - tgnum_vpar * sp.Rational(1, 4) * v * vpar**2 * bb2 * R
+            * (1 - fact_conservative_u)
+            * _b_dot_grad_element(vpar) * _b_dot_grad_element(rho)
+            * xjac * timestep
+            - tgnum_vpar * sp.Rational(1, 4) * vpar**3 * bb2 * R
+            * fact_conservative_u
+            * _b_dot_grad_element(rho) * _b_dot_grad_element(v) * xjac * timestep
+        )
+    if include_auxiliary:
+        B += (
+            -v * aux_rho0 * vpar * bb2 * R * (1 - fact_conservative_u) * xjac
+            + v * R * aux_mom_par0 * xjac
+        )
+    if include_pinch:
+        psi_gradient = grad(psi)
+        B += (
+            V_prof_pinch
+            / sp.sqrt(psi_gradient[0]**2 + psi_gradient[1]**2)
+            * dot(psi_gradient, grad(vpar)) * rho * v * R * xjac
+        )
+    # The parallel momentum density is rho*v_par*B**2*R.  The element routine
+    # freezes the density correction in the tangent, as in the perpendicular
+    # momentum equation.
+    A = v * corr_neg_dens(freeze(rho)) * vpar * bb2 * R * xjac
+    if include_conservative:
+        A += fact_conservative_u * v * rho * freeze(vpar) * bb2 * R * xjac
+    return EvolutionEquation("model600_parallel_velocity", v, A, B)
