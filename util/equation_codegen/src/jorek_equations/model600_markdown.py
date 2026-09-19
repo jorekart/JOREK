@@ -12,6 +12,7 @@ from .linearization import resolve_current, variation
 from .fortran import fortran
 from .model600 import (
     FIELDS,
+    density_equation_rho,
     T,
     Te,
     current_constraint_equation_zj,
@@ -30,14 +31,14 @@ from .source_compare import parse_fortran_expression
 from .symbols import FieldRole, FieldValue, TestFunction, coefficient
 
 
-ROWS = ("psi", "u", "zj", "w")
+ROWS = ("psi", "u", "zj", "w", "rho")
 FIELD_NAMES = {
     field: name
     for field, name in zip(FIELDS, ("psi", "u", "zj", "w", "rho", "T", "vpar", "Ti", "Te", "rhon", "rhoimp"))
 }
 ASSIGNMENT_RE = re.compile(
     r"(?P<lhs>(?:rhs_ij(?:_k)?|amat(?:_n|_k|_kn|_nn)?)\s*\(\s*"
-    r"var_(?P<row>psi|u|zj|w)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
+    r"var_(?P<row>psi|u|zj|w|rho)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
     re.I,
 )
 
@@ -312,6 +313,15 @@ def _generated_pools(
         _add_linearized(
             pools, "psi", result,
             previous_names={"psi": "delta_g(mp,var_psi,ms,mt)"},
+        )
+    if "rho" in rows:
+        equation = density_equation_rho(with_TiTe=bool(with_tite))
+        _add_linearized(
+            pools, "rho",
+            equation.linearize(
+                fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
+            ),
+            previous_names={"rho": "delta_rho_g"},
         )
     if "zj" in rows:
         _add_linearized(
@@ -664,6 +674,35 @@ def _source_monomial_slots(assignments, generated_terms, *, temperature_model=No
     return slots
 
 
+def _unmatched_generated_blocks(rows, source_lhs, generated, temperature_model):
+    """Emit generated assignments the source routine does not write at all.
+
+    A Jacobian column that is missing from the element routine entirely has no
+    source assignment to align against, so it would otherwise disappear from
+    the report instead of showing up as an unimplemented block.
+    """
+
+    slots = []
+    for lhs, terms in generated.items():
+        if lhs in source_lhs or not terms:
+            continue
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho)\b", lhs)
+        if row_match is None or row_match.group(1) not in rows:
+            continue
+        synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")
+        emitted = set()
+        for text in terms:
+            for term in _expanded_ordered_monomials(
+                text, temperature_model=temperature_model,
+            ):
+                rendered = _canonical_monomial(term)
+                if rendered in emitted:
+                    continue
+                emitted.add(rendered)
+                slots.append((synthetic, "", rendered))
+    return slots
+
+
 def _source_term_order(source_piece, term, common_symbols=()):
     """Estimate textual order for expanded terms inside one source term."""
 
@@ -816,6 +855,9 @@ def _source_slots(assignments, generated, *, temperature_model=None):
                         temperature_model=temperature_model,
                     )
                 )
+        slots.extend(_unmatched_generated_blocks(
+            {"u"}, set(by_lhs), generated, temperature_model,
+        ))
         return slots
     # Export the remaining equations (notably PSI) at monomial granularity as
     # well.  The older path below aligned whole Fortran additive pieces, which
@@ -825,7 +867,7 @@ def _source_slots(assignments, generated, *, temperature_model=None):
         by_lhs = defaultdict(list)
         for assignment in assignments:
             by_lhs[assignment.lhs].append(assignment)
-        return [
+        slots = [
             slot
             for lhs, lhs_assignments in by_lhs.items()
             for slot in _source_monomial_slots(
@@ -833,6 +875,11 @@ def _source_slots(assignments, generated, *, temperature_model=None):
                 temperature_model=temperature_model,
             )
         ]
+        slots.extend(_unmatched_generated_blocks(
+            {assignment.row for assignment in assignments},
+            set(by_lhs), generated, temperature_model,
+        ))
+        return slots
     # Parsing generated text is expensive, especially for the expanded u
     # tangent.  Build the canonical lookup once instead of once per source
     # term.
@@ -926,7 +973,7 @@ def _source_slots(assignments, generated, *, temperature_model=None):
             # Focused u-RHS reports are source-slot aligned; do not append
             # SymPy-expanded leftovers as thousands of artificial lines.
             continue
-        row_match = re.search(r"\(var_(psi|u|zj|w)", lhs)
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho)\b", lhs)
         if row_match is None:
             continue
         synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")

@@ -532,3 +532,128 @@ vpar_psi_equation_1 = induction_equation_1
 
 def _parallel_norm(flux):
     return (F0**2 + grad(flux)[0]**2 + grad(flux)[1]**2) / R**2
+
+
+# ---------------------------------------------------------------------------
+# Density equation (``var_rho``)
+# ---------------------------------------------------------------------------
+
+# Transport coefficients supplied as element work values.  They are profile
+# quantities evaluated at the background state and are frozen in the Newton
+# tangent, exactly as the element routine treats them.
+D_par_local = coefficient("D_par_local")
+D_par_local_imp = coefficient("D_par_local_imp")
+D_par_sc_num = coefficient("D_par_sc_num")
+D_par_imp_sc_num = coefficient("D_par_imp_sc_num")
+D_perp_num_psin = coefficient("D_perp_num_psin")
+D_prof = coefficient("D_prof")
+D_prof_imp = coefficient("D_prof_imp")
+tau_sc = coefficient("tau_sc")
+tgnum_rho = coefficient("tgnum_rho")
+V_prof_pinch = coefficient("V_prof_pinch")
+aux_rho0 = coefficient("aux_rho0")
+
+
+def _b_dot_grad(value, flux=psi):
+    """Return the element routine's ``Bgrad_*`` work value for ``value``.
+
+    ``Bgrad_rho = (F0/BigR*r0_p + r0_x*ps0_y - r0_y*ps0_x)/BigR``.  The element
+    routine stores the toroidal and poloidal halves of the *test* function
+    version separately (``Bgrad_rho_k_star`` and ``Bgrad_rho_star``) because
+    they belong to different FFT channels; the channel split is recovered
+    automatically from the toroidal derivative order.
+    """
+
+    return (
+        F0 / R * dphi(value)
+        + dR(value) * dZ(flux) - dZ(value) * dR(flux)
+    ) / R
+
+
+def _perpendicular_diffusion(test, value):
+    """Weak perpendicular diffusion operator, including its toroidal part."""
+
+    return dot(grad(test), grad(value)) + dphi(test) * dphi(value) / R**2
+
+
+def density_equation_rho(
+    *,
+    with_TiTe=False,
+    include_diamagnetic=True,
+    include_parallel_velocity=True,
+    include_neutrals=True,
+    include_impurities=True,
+    include_tgnum=True,
+    include_pinch=True,
+    include_auxiliary=True,
+):
+    """Return the model-600 density equation for ``var_rho``."""
+
+    v = test_function("v")
+    thermal = Te if with_TiTe else T
+    alpha_e_value = alpha_e_state(thermal)
+    sion_rate = Sion_rate(thermal)
+    srec_rate = Srec_rate(thermal)
+    bb2 = _parallel_norm(psi)
+    # ``(D_par_local + D_par_sc_num*tau_sc) - D_prof`` is the parallel
+    # diffusivity in excess of the perpendicular one; the element routine
+    # writes the same grouping for the impurity species.
+    d_par_excess = D_par_local + D_par_sc_num * tau_sc - D_prof
+    d_par_excess_imp = D_par_local_imp + D_par_imp_sc_num * tau_sc - D_prof_imp
+
+    B = (
+        v * R * (
+            particle_source + source_pellet + source_bg_drift + source_imp_drift
+        ) * xjac
+        + v * R**2 * element_bracket(rho, u)
+        + v * 2 * R * rho * dZ(u) * xjac
+        - d_par_excess * R / bb2 * _b_dot_grad(v)
+        * (_b_dot_grad(rho) - _b_dot_grad(rhoimp)) * xjac
+        - d_par_excess_imp * R / bb2 * _b_dot_grad(v)
+        * _b_dot_grad(rhoimp) * xjac
+        - D_prof * R * _perpendicular_diffusion(v, rho - rhoimp) * xjac
+        - D_prof_imp * R * _perpendicular_diffusion(v, rhoimp) * xjac
+        - D_perp_num_psin * _laplacian(v) * _laplacian(rho) * R * xjac
+    )
+    if include_parallel_velocity:
+        B += (
+            -v * F0 / R * vpar * dphi(rho) * xjac
+            - v * vpar * element_bracket(rho, psi)
+            - v * F0 / R * rho * dphi(vpar) * xjac
+            - v * rho * element_bracket(vpar, psi)
+        )
+    if include_diamagnetic:
+        pi = _diamagnetic_pressure(
+            with_TiTe=with_TiTe, include_impurities=include_impurities
+        )
+        B += v * 2 * tauIC * 2 * dZ(pi) * R * xjac
+    if include_neutrals:
+        electron_density = rho + alpha_e_value * rhoimp
+        B += (
+            v * electron_density * rhon * R * sion_rate * xjac
+            - v * electron_density * (rho - rhoimp) * R * srec_rate * xjac
+        )
+    if include_tgnum:
+        timestep = coefficient("tstep")
+        B += (
+            -tgnum_rho * sp.Rational(1, 4) * R**3
+            * _poloidal_cross(rho, u) * _poloidal_cross(v, u) * xjac * timestep
+            - tgnum_rho * sp.Rational(1, 4) * R * vpar**2
+            * _b_dot_grad(rho) * _b_dot_grad(v) * xjac * timestep
+        )
+    if include_auxiliary:
+        B += v * R * aux_rho0 * xjac
+    if include_pinch:
+        # Weak form of -div(rho * V_pinch), with
+        # V_pinch = -V_prof_pinch * grad(psi)/|grad(psi)|.  The pinch
+        # direction is built from the evolved flux, so it is varied like any
+        # other state quantity; the element routine freezes it (see
+        # JOREK_FINDINGS.md).
+        psi_gradient = grad(psi)
+        B += (
+            -V_prof_pinch
+            / sp.sqrt(psi_gradient[0]**2 + psi_gradient[1]**2)
+            * dot(grad(v), psi_gradient) * rho * R * xjac
+        )
+    A = v * rho * R * xjac
+    return EvolutionEquation("model600_density", v, A, B, kind="evolution")

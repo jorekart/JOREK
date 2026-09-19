@@ -43,7 +43,7 @@ algebraic difference.
 ## Model 600 reports
 
 The integrated model-600 checker validates the currently implemented `psi`,
-`u`, `zj`, and `w` rows and writes two line-aligned Markdown reports:
+`u`, `zj`, `w` and `rho` rows and writes two line-aligned Markdown reports:
 
 ```bash
 .venv/bin/python examples/check_model600_integrated.py
@@ -51,7 +51,7 @@ meld reports/model600_fortran_terms.md reports/model600_generated_terms.md
 ```
 
 The integrated script accepts the same selector, for example
-`--equation psi`; with no selector it exports all four rows.
+`--equation psi`; with no selector it exports all five rows.
 
 To generate only the reports, without running the pass/fail checks:
 
@@ -75,9 +75,9 @@ To inspect only the factored perpendicular-momentum RHS:
 This focused mode preserves the Fortran outer-term structure and does not
 build the expensive `u` AMAT columns.
 
-The available selections are `psi`, `u`, `zj`, and `w`. Repeat
+The available selections are `psi`, `u`, `zj`, `w` and `rho`. Repeat
 `--equation` to select more than one row. If no selection is supplied, all
-four rows are exported.
+five rows are exported.
 
 To compare the two reports block by block instead of line by line:
 
@@ -119,20 +119,28 @@ factor of one half by hand; that half is physical, not a legacy quirk.
 
 ## Known JOREK differences
 
-With the conventions above, every `psi`, `u`, `zj` and `w` source term is
-reproduced by the generator, and 51 of the 61 exported assignment blocks are
-identical. The remaining 10 are terms the generator produces and the element
+With the conventions above, every `psi`, `u`, `zj`, `w` and `rho` source term
+is reproduced by the generator, and 81 of the 100 exported assignment blocks
+are identical. The remaining 19 are terms the generator produces and the element
 routine does not, or coefficients that disagree. They are recorded, with their
 suggested Fortran fixes, in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
 
 1. the impurity part of the ion pressure is not differentiated in the
-   diamagnetic momentum terms (`amat(var_u,var_Ti)`, `amat(var_u,var_T)`,
-   `amat(var_u,var_rhoimp)`);
+   diamagnetic terms of the momentum and density equations
+   (`amat(var_u,var_Ti)`, `amat(var_u,var_T)`, `amat(var_u,var_rhoimp)` and
+   the same three columns of `var_rho`);
 2. the impurity part of the electron pressure is not differentiated in the
    induction equation (`amat(var_psi,var_Te)`, `amat_n(var_psi,var_Te)`,
-   `amat(var_psi,var_rhoimp)`);
+   `amat(var_psi,var_rhoimp)`, and an `amat_n(var_psi,var_rhoimp)` that the
+   element routine does not have at all);
 3. the one-temperature `amat(var_u,var_T)` diamagnetic-viscosity tangent is a
-   factor two too large.
+   factor two too large;
+4. the density inward-pinch term is not differentiated with respect to `psi`
+   (`amat(var_rho,var_psi)`);
+5. the temperature dependence of `alpha_e` is not differentiated in the
+   density ionization/recombination sources (`amat(var_rho,var_Te)`,
+   `amat(var_rho,var_T)`), although the momentum equation does differentiate
+   it in the same sources.
 
 Assignments and terms follow their order in
 `models/model600/mod_elt_matrix_fft.f90`. A source term that is not available

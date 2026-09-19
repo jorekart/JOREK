@@ -749,11 +749,28 @@ def _normalize_model600_text(
         key: "({}+{})".format(pi_derivatives[key], pe_derivatives[key])
         for key in ("s", "t")
     }
+    # ``sqrt`` is the only Fortran intrinsic appearing in the exported volume
+    # terms.  Rewrite it as a power so the expression parser needs no function
+    # table.
+    expression = re.sub(
+        r"\bsqrt\s*\(([^()]*)\)", r"((\1)**(1/2))", expression, flags=re.I,
+    )
     aliases = {
         "BB2": "((F0**2+ps0_x**2+ps0_y**2)/BigR**2)",
+        "psi_grad2": "(ps0_x**2+ps0_y**2)",
+        # Parallel-gradient work values of the density equation.  The density
+        # ones are already covered by ``normalize_fortran_text``; the impurity
+        # ones must be expanded after ``rimp0`` has been renamed.
+        "Bgrad_rhoimp": "((F0*rhoimp0_p/BigR+rhoimp0_x*ps0_y-rhoimp0_y*ps0_x)/BigR)",
+        "Bgrad_rhoimp_psi": "((rhoimp0_x*psi_y-rhoimp0_y*psi_x)/BigR)",
+        "Bgrad_rhoimp_rhoimp": "((rhoimp_x*ps0_y-rhoimp_y*ps0_x)/BigR)",
+        "Bgrad_rhoimp_rhoimp_n": "(F0*rhoimp_p/BigR**2)",
         "Btheta2": "((ps0_x**2+ps0_y**2)/BigR**2)",
         "Btheta2_psi": "(2*(psi_x*ps0_x+psi_y*ps0_y)/BigR**2)",
         "Vpar0": "vpar0",
+        # Fortran is case insensitive; the density block spells the parallel
+        # velocity trial function ``Vpar`` while the DSL prints ``vpar``.
+        "Vpar": "vpar",
         "Pe0": pe0,
         "Pe0_s": pe_derivatives["s"],
         "Pe0_t": pe_derivatives["t"],

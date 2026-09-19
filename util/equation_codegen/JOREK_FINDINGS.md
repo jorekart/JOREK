@@ -14,18 +14,23 @@ comparing them block by block:
 
 `diff_model600_reports.py` compares each `rhs_ij`/`amat` assignment as a
 multiset of monomials and prints the algebraic residual, so a block that only
-reorders its terms is reported as identical. At the time of writing, 51 of the
-61 exported blocks are identical; the remaining 10 are the three findings
+reorders its terms is reported as identical. At the time of writing, 81 of the
+100 exported blocks are identical; the remaining 19 are the five findings
 below. Nothing in this list has been fixed in the Fortran.
 
-Status of the four exported rows:
+Status of the five exported rows:
 
 | Row | Residual | Jacobian |
 |---|---|---|
-| `psi` | reproduced | findings 2 |
+| `psi` | reproduced | finding 2 |
 | `u` | reproduced | findings 1 and 3 |
 | `zj` | reproduced | reproduced |
 | `w` | reproduced | reproduced |
+| `rho` | reproduced | findings 1, 4 and 5 |
+
+Every source term of every row is reproduced by the generator. With the single
+exception of finding 3, the differences are all terms the generator produces
+and the element routine does not.
 
 The NEO branch is excluded from the default reports (`--include-neo` enables
 it) and has not been audited here.
@@ -60,11 +65,12 @@ uses `tauIC*2.`. Finding 3 is the one place where it does not.
 
 ---
 
-## Finding 1 — the impurity ion pressure is not differentiated in the diamagnetic momentum terms
+## Finding 1 — the impurity ion pressure is not differentiated in the diamagnetic terms
 
 **Where:** `amat(var_u,var_Ti)` (two-temperature branch),
-`amat(var_u,var_T)` (one-temperature branch) and `amat(var_u,var_rhoimp)`,
-all in the `var_u` block of `mod_elt_matrix_fft.f90`.
+`amat(var_u,var_T)` (one-temperature branch) and `amat(var_u,var_rhoimp)` in
+the `var_u` block of `mod_elt_matrix_fft.f90`, and the same three columns of
+the `var_rho` block.
 
 **What happens:** the momentum residual uses the full ion pressure,
 
@@ -99,9 +105,33 @@ on (`alpha_i` carries no temperature dependence, `dalpha_i_dT = 0`, so no
 needs the same substitution with the chain factor of `1/2` that the block
 already applies through its `tauIC` prefactor.
 
+The density equation carries the same pressure through its diamagnetic drift
+term,
+
+```fortran
++ v * 2.d0 * tauIC*2. * Pi0_y * BigR * xjac * tstep * factor(var_rho,7)
+```
+
+whose tangents are again written for `Pi0 = r0*Ti0` only:
+
+```fortran
+amat(var_rho,var_Ti) = - v * 2.d0 * tauIC*2. * (Ti_y * r0 + Ti*r0_y) * BigR * xjac * theta * tstep
+amat(var_rho,var_rho) = ... - v * 2.d0 * tauIC*2. * (rho_y * Ti0 + rho*Ti0_y) * BigR * xjac * theta * tstep
+```
+
+`amat(var_rho,var_rho)` is correct, because `Pi0` depends on `rho` only
+through `r0*Ti0`; `amat(var_rho,var_Ti)` (and its one-temperature
+`amat(var_rho,var_T)` counterpart) needs `r0 -> (r0 + rimp0*alpha_i)`, and
+`amat(var_rho,var_rhoimp)` needs the new contribution
+
+```fortran
+- v * 2.d0 * tauIC*2. * alpha_i * (rhoimp_y * Ti0 + rhoimp * Ti0_y) * BigR * xjac * theta * tstep
+```
+
 **Scale:** 22 monomials missing from each of `amat(var_u,var_Ti)`,
-`amat(var_u,var_T)` and `amat(var_u,var_rhoimp)` (the latter in both
-temperature branches), 88 monomials in total.
+`amat(var_u,var_T)` and `amat(var_u,var_rhoimp)`, and 2 monomials from each of
+`amat(var_rho,var_Ti)`, `amat(var_rho,var_T)` and `amat(var_rho,var_rhoimp)`
+(each column in both temperature branches), 96 monomials in total.
 
 **Related, not visible in the reports:** the work variables that feed the
 diamagnetic viscosity drop the same contribution and would need the same
@@ -127,6 +157,7 @@ the `Pi0_*_Ti` definitions.
 
 **Where:** `amat(var_psi,var_Te)`, `amat_n(var_psi,var_Te)` and
 `amat(var_psi,var_rhoimp)` (and their one-temperature `var_T` counterparts).
+`amat_n(var_psi,var_rhoimp)` is missing from the element routine entirely.
 
 **What happens:** the induction residual uses `Pe0 = (r0 + rimp0*alpha_e)*Te0`
 in its diamagnetic coupling, but the tangents are written as if
@@ -159,9 +190,16 @@ term `rimp0*alpha_e_tri*Te*Te0_t` that comes from differentiating
     * (rhoimp_p*alpha_e*Te0 + rhoimp*alpha_e_bis*Te0_p)            * xjac * theta * tstep
 ```
 
+plus a new `amat_n(var_psi,var_rhoimp)` assignment for the toroidal channel,
+
+```fortran
+amat_n(var_psi,var_rhoimp) = &
+    + v * tauIC*2./(r0_corr*BB2) * F0**3/BigR**3 * alpha_e * Te0 * rhoimp_p * xjac * theta * tstep
+```
+
 **Scale:** 8 monomials missing from `amat(var_psi,var_Te)`, 1 from
-`amat_n(var_psi,var_Te)` and 5 from `amat(var_psi,var_rhoimp)`, in each
-temperature branch.
+`amat_n(var_psi,var_Te)`, 5 from `amat(var_psi,var_rhoimp)` and 1 from the
+absent `amat_n(var_psi,var_rhoimp)`, in each temperature branch.
 
 ---
 
@@ -213,6 +251,88 @@ chain factor is one there — so this is a one-temperature-only error. It makes
 the corresponding Newton block inconsistent with the residual and can slow or
 prevent convergence when the diamagnetic viscosity is active
 (`Wdia = .true.`) in a single-temperature run.
+
+---
+
+## Finding 4 — the density inward pinch is not differentiated with respect to psi
+
+**Where:** the `var_rho` block, `amat(var_rho,var_psi)`.
+
+**What happens:** the density residual contains the weak form of
+`-div(r0 * V_pinch)` with `V_pinch = -V_prof_pinch * grad(psi)/|grad(psi)|`:
+
+```fortran
+- V_prof_pinch / sqrt(psi_grad2) * (v_x * ps0_x + v_y * ps0_y) * r0 * BigR * xjac * tstep * factor(var_rho,14)
+```
+
+with `psi_grad2 = ps0_x**2 + ps0_y**2`. The pinch direction is therefore a
+function of the evolved poloidal flux, but `amat(var_rho,var_psi)` contains no
+corresponding tangent. Every other flux-dependent quantity of the same
+equation *is* differentiated there — `BB2` through `BB2_psi`, the parallel
+gradients through `Bgrad_rho_star_psi`, `Bgrad_rho_psi` and
+`Bgrad_rhoimp_psi` — which is what makes the omission stand out.
+
+**Suggested fix:** the missing contribution is the transverse projection of
+the trial flux gradient,
+
+```fortran
++ V_prof_pinch / sqrt(psi_grad2) * r0 * BigR * xjac * theta * tstep                       &
+    * ( (v_x * psi_x + v_y * psi_y)                                                       &
+      - (ps0_x*v_x + ps0_y*v_y) * (ps0_x*psi_x + ps0_y*psi_y) / psi_grad2 )
+```
+
+(the first bracket from varying `grad(psi)` in the dot product, the second from
+varying `1/|grad(psi)|`).
+
+**Scale:** 6 monomials, in each temperature branch.
+
+**Note:** `V_prof_pinch`, `D_prof`, `D_prof_imp`, `D_par_local`,
+`D_par_local_imp`, `tau_sc` and `D_perp_num_psin` are profile work values that
+also depend on the state through `psi_norm` (and, for `tau_sc`, through the
+pressure). The element routine freezes all of them, and the generator follows
+that convention, so they produce no report differences. The pinch term is
+different: its flux dependence is explicit in the assembled expression rather
+than hidden inside a work value.
+
+---
+
+## Finding 5 — the temperature dependence of alpha_e is not differentiated in the density source terms
+
+**Where:** the `var_rho` block, `amat(var_rho,var_Te)` (two-temperature) and
+`amat(var_rho,var_T)` (one-temperature).
+
+**What happens:** the ionization and recombination sources of the density
+equation carry the electron-fraction coefficient `alpha_e`, which is a
+function of the electron temperature (`alpha_e = m_i_over_m_imp*Z_imp - 1`,
+with `dalpha_e_dT = m_i_over_m_imp*dZ_imp_dT`):
+
+```fortran
++ v * (r0+alpha_e*rimp0) * rn0 * BigR * Sion_T          * xjac * tstep * factor(var_rho,8) &
+- v * (r0+alpha_e*rimp0) * (r0-rimp0) * BigR * Srec_T   * xjac * tstep * factor(var_rho,9)
+```
+
+but the temperature tangent differentiates only the rates:
+
+```fortran
+amat(var_rho,var_Te) = - v * BigR * (r0+alpha_e*rimp0) * rn0 * dSion_dT * Te        * xjac * theta * tstep &
+                       + v * BigR * (r0+alpha_e*rimp0) * (r0-rimp0) * dSrec_dT * Te * xjac * theta * tstep
+```
+
+The momentum equation differentiates the same coefficient in the same source
+terms — `amat(var_u,var_Te)` contains
+`- BigR**3 * (dalpha_e_dT * rimp0 * rn0 * Sion_T * Te) * ...` and its
+recombination partner — so the two equations disagree about whether `alpha_e`
+is a state function.
+
+**Suggested fix:** add, to `amat(var_rho,var_Te)` (and to
+`amat(var_rho,var_T)` with the same spelling in `T`):
+
+```fortran
+- v * BigR * dalpha_e_dT * rimp0 * rn0 * Sion_T * Te          * xjac * theta * tstep &
++ v * BigR * dalpha_e_dT * rimp0 * (r0-rimp0) * Srec_T * Te   * xjac * theta * tstep
+```
+
+**Scale:** 3 monomials, in each temperature branch.
 
 ---
 
