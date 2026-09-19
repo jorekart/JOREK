@@ -19,8 +19,8 @@ rewriting every `_s`/`_t` derivative through the chain rule, because the
 element routine spells the same poloidal bracket sometimes as
 `a_s*b_t - a_t*b_s` and sometimes as `xjac*(a_x*b_y - a_y*b_x)` — even between
 a residual and its own tangent.  A block whose two sides differ only by that
-rewrite is reported as `SAME`. At the time of writing, 105 of the
-138 exported blocks are identical; the remaining 33 are the nine findings
+rewrite is reported as `SAME`. At the time of writing, 127 of the
+162 exported blocks are identical; the remaining 35 are the ten findings
 below. Nothing in this list has been fixed in the Fortran.
 
 Status of the five exported rows:
@@ -33,10 +33,15 @@ Status of the five exported rows:
 | `w` | reproduced | reproduced |
 | `rho` | reproduced | findings 1, 4 and 5 |
 | `vpar` | findings 6 and 9 | findings 4, 6, 7, 8 and 9 |
+| `rhoimp` | finding 10 | reproduced |
 
 Every source term of every row is reproduced by the generator. Apart from
 findings 3, 6 and 9, the differences are all terms the generator produces and
 the element routine does not.
+
+Findings 3, 6, 9 and 10 are disagreements about a coefficient or a sign rather
+than omissions, and finding 10 is the only one that sits in a residual rather
+than in a tangent.
 
 The NEO branch is excluded from the default reports (`--include-neo` enables
 it) and has not been audited here.
@@ -503,6 +508,52 @@ report difference.
 
 ---
 
+## Finding 10 — the impurity parallel diffusivity loses its shock-capturing part in the toroidal channel
+
+**Where:** `rhs_ij_k(var_rhoimp)`.
+
+**What happens:** the parallel impurity diffusion term of the impurity-density
+residual is split between the two FFT channels. The poloidal channel uses the
+full diffusivity,
+
+```fortran
+rhs_ij(var_rhoimp) = &
+    - ((D_par_local_imp+D_par_imp_sc_num*tau_sc)-D_prof_imp) * BigR / BB2 * Bgrad_rho_star   * (Bgrad_rhoimp) * xjac * tstep * factor(var_rhoimp,1) &
+```
+
+while the toroidal channel drops the shock-capturing contribution
+`D_par_imp_sc_num*tau_sc`:
+
+```fortran
+rhs_ij_k(var_rhoimp) = &
+    - (D_par_local_imp-D_prof_imp)                          * BigR / BB2 * Bgrad_rho_k_star * (Bgrad_rhoimp) * xjac * tstep * factor(var_rhoimp,1) &
+```
+
+Two other places in the same routine write the same physics with the full
+coefficient, which is what makes this a slip rather than a convention:
+
+* the density equation splits the identical impurity term across the same two
+  channels and keeps `D_par_imp_sc_num*tau_sc` in both
+  (`rhs_ij_k(var_rho)`);
+* all three toroidal Jacobian blocks of the impurity equation —
+  `amat_k(var_rhoimp,var_psi)`, `amat_k(var_rhoimp,var_rhoimp)` and
+  `amat_kn(var_rhoimp,var_rhoimp)` — use the full coefficient, so the
+  tangent does not differentiate the residual it belongs to.
+
+**Suggested fix:** replace `(D_par_local_imp-D_prof_imp)` by
+`((D_par_local_imp+D_par_imp_sc_num*tau_sc)-D_prof_imp)` in
+`rhs_ij_k(var_rhoimp)`.
+
+**Effect:** unlike findings 1, 2, 4, 5, 7 and 8, this one is in the residual,
+so it changes the converged solution and not only the Newton convergence: with
+shock capturing active (`tau_sc /= 0`) the toroidal part of the parallel
+impurity diffusion is under-resolved relative to the poloidal part. It also
+makes the impurity Jacobian inconsistent with its own residual.
+
+**Scale:** 3 monomials, in each temperature branch.
+
+---
+
 ## Reproducing
 
 ```bash
@@ -520,7 +571,7 @@ residual with a negative sign is a term the linearization produces and the
 element routine does not.
 
 In the aligned Markdown reports, a blank cell on the generated side is now a
-genuine missing term: across all 138 blocks the only source lines without a
+genuine missing term: across all 162 blocks the only source lines without a
 generated counterpart are the 7 of finding 3, the 6 of finding 6 and the 4 of
 finding 9.
 

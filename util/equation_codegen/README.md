@@ -43,8 +43,8 @@ algebraic difference.
 ## Model 600 reports
 
 The integrated model-600 checker validates the currently implemented `psi`,
-`u`, `zj`, `w`, `rho` and `vpar` rows and writes two line-aligned Markdown
-reports:
+`u`, `zj`, `w`, `rho`, `vpar` and `rhoimp` rows and writes two line-aligned
+Markdown reports:
 
 ```bash
 .venv/bin/python examples/check_model600_integrated.py
@@ -52,7 +52,7 @@ meld reports/model600_fortran_terms.md reports/model600_generated_terms.md
 ```
 
 The integrated script accepts the same selector, for example
-`--equation psi`; with no selector it exports all six rows.
+`--equation psi`; with no selector it exports all seven rows.
 
 To generate only the reports, without running the pass/fail checks:
 
@@ -76,9 +76,9 @@ To inspect only the factored perpendicular-momentum RHS:
 This focused mode preserves the Fortran outer-term structure and does not
 build the expensive `u` AMAT columns.
 
-The available selections are `psi`, `u`, `zj`, `w`, `rho` and `vpar`. Repeat
-`--equation` to select more than one row. If no selection is supplied, all
-six rows are exported.
+The available selections are `psi`, `u`, `zj`, `w`, `rho`, `vpar` and
+`rhoimp`. Repeat `--equation` to select more than one row. If no selection is
+supplied, all seven rows are exported.
 
 To compare the two reports block by block instead of line by line:
 
@@ -124,9 +124,9 @@ factor of one half by hand; that half is physical, not a legacy quirk.
 
 ## Known JOREK differences
 
-With the conventions above, every `psi`, `u`, `zj`, `w`, `rho` and `vpar`
-source term is reproduced by the generator, and 105 of the 138 exported
-assignment blocks are identical. The remaining 33 are terms the generator produces and the element
+With the conventions above, every `psi`, `u`, `zj`, `w`, `rho`, `vpar` and
+`rhoimp` source term is reproduced by the generator, and 127 of the 162
+exported assignment blocks are identical. The remaining 35 are terms the generator produces and the element
 routine does not, or coefficients that disagree. They are recorded, with their
 suggested Fortran fixes, in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
 
@@ -154,7 +154,11 @@ suggested Fortran fixes, in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
 8. the toroidal channel of the parallel-parallel viscosity tangent is missing
    (`amat_n(var_vpar,var_vpar)`, `amat_kn(var_vpar,var_vpar)`);
 9. the parallel-velocity inward-pinch tangent repeats the sign of its own
-   residual instead of flipping it.
+   residual instead of flipping it;
+10. the impurity parallel diffusivity loses its shock-capturing part
+    `D_par_imp_sc_num*tau_sc` in the toroidal channel of the residual
+    (`rhs_ij_k(var_rhoimp)`) — the only finding that affects the converged
+    solution rather than only the Newton tangent.
 
 A source monomial and its generated counterpart are aligned on the same report
 line even when only their numeric coefficients differ, so a term the element

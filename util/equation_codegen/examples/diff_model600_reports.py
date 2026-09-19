@@ -27,8 +27,13 @@ def read_blocks(path):
     key = None
     section = ""
     for line in Path(path).read_text(encoding="utf-8").splitlines():
-        if line.startswith("## "):
-            section = line[3:].strip()
+        if line.startswith("#") or line.startswith(">"):
+            # Any heading closes the block being read.  Without this the last
+            # block of a section swallowed the next section's title lines.
+            if line.startswith("## ") and not line.startswith("### "):
+                section = line[3:].strip()
+            key = None
+        if line.startswith("## ") and not line.startswith("### "):
             continue
         heading = re.match(r"^#### `(.*)`", line)
         if heading:

@@ -810,3 +810,59 @@ def parallel_velocity_equation_vpar(
     if include_conservative:
         A += fact_conservative_u * v * rho * freeze(vpar) * bb2 * R * xjac
     return EvolutionEquation("model600_parallel_velocity", v, A, B)
+
+
+# ---------------------------------------------------------------------------
+# Impurity density equation (``var_rhoimp``)
+# ---------------------------------------------------------------------------
+
+Dn_perp_num = coefficient("Dn_perp_num")
+tgnum_rhoimp = coefficient("tgnum_rhoimp")
+
+
+def impurity_density_equation_rhoimp(
+    *,
+    with_TiTe=False,
+    include_parallel_velocity=True,
+    include_tgnum=True,
+    include_auxiliary=True,
+):
+    """Return the model-600 impurity-density equation for ``var_rhoimp``.
+
+    The impurity species is advected and diffused like the main one, but it
+    has no atomic sources and no diamagnetic contribution; the element routine
+    marks the latter with an explicit placeholder comment.
+    """
+
+    v = test_function("v")
+    bb2 = _parallel_norm(psi)
+    d_par_excess_imp = D_par_local_imp + D_par_imp_sc_num * tau_sc - D_prof_imp
+
+    B = (
+        -d_par_excess_imp * R / bb2 * _b_dot_grad(v)
+        * _b_dot_grad(rhoimp) * xjac
+        - D_prof_imp * R * _perpendicular_diffusion(v, rhoimp) * xjac
+        + v * R**2 * element_bracket(rhoimp, u)
+        + v * 2 * R * rhoimp * dZ(u) * xjac
+        - Dn_perp_num * _laplacian(v) * _laplacian(rhoimp) * R * xjac
+    )
+    if include_parallel_velocity:
+        B += (
+            -v * F0 / R * vpar * dphi(rhoimp) * xjac
+            - v * vpar * element_bracket(rhoimp, psi)
+            - v * F0 / R * rhoimp * dphi(vpar) * xjac
+            - v * rhoimp * element_bracket(vpar, psi)
+        )
+    if include_tgnum:
+        timestep = coefficient("tstep")
+        B += (
+            -tgnum_rhoimp * sp.Rational(1, 4) * R**3
+            * _poloidal_cross(rhoimp, u) * _poloidal_cross(v, u)
+            * xjac * timestep
+            - tgnum_rhoimp * sp.Rational(1, 4) * R * vpar**2
+            * _b_dot_grad(rhoimp) * _b_dot_grad(v) * xjac * timestep
+        )
+    if include_auxiliary:
+        B += R * v * source_imp_drift * xjac
+    A = v * rhoimp * R * xjac
+    return EvolutionEquation("model600_impurity_density", v, A, B)

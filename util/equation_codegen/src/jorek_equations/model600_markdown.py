@@ -13,6 +13,7 @@ from .fortran import fortran
 from .model600 import (
     FIELDS,
     density_equation_rho,
+    impurity_density_equation_rhoimp,
     parallel_velocity_equation_vpar,
     T,
     Te,
@@ -32,14 +33,14 @@ from .source_compare import parse_fortran_expression
 from .symbols import FieldRole, FieldValue, TestFunction, coefficient
 
 
-ROWS = ("psi", "u", "zj", "w", "rho", "vpar")
+ROWS = ("psi", "u", "zj", "w", "rho", "vpar", "rhoimp")
 FIELD_NAMES = {
     field: name
     for field, name in zip(FIELDS, ("psi", "u", "zj", "w", "rho", "T", "vpar", "Ti", "Te", "rhon", "rhoimp"))
 }
 ASSIGNMENT_RE = re.compile(
     r"(?P<lhs>(?:rhs_ij(?:_k)?|amat(?:_n|_k|_kn|_nn)?)\s*\(\s*"
-    r"var_(?P<row>psi|u|zj|w|rho|vpar)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
+    r"var_(?P<row>psi|u|zj|w|rho|rhoimp|vpar)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
     re.I,
 )
 
@@ -360,6 +361,15 @@ def _generated_pools(
                 "rho": "delta_rho_g",
                 "psi": "delta_ps",
             },
+        )
+    if "rhoimp" in rows:
+        equation = impurity_density_equation_rhoimp(with_TiTe=bool(with_tite))
+        _add_linearized(
+            pools, "rhoimp",
+            equation.linearize(
+                fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
+            ),
+            previous_names={"rhoimp": "delta_g(mp,var_rhoimp,ms,mt)"},
         )
     if "zj" in rows:
         _add_linearized(
@@ -742,7 +752,7 @@ def _unmatched_generated_blocks(rows, source_lhs, generated, temperature_model):
     for lhs, terms in generated.items():
         if lhs in source_lhs or not terms:
             continue
-        row_match = re.search(r"\(var_(psi|u|zj|w|rho|vpar)\b", lhs)
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar)\b", lhs)
         if row_match is None or row_match.group(1) not in rows:
             continue
         synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")
@@ -1064,7 +1074,7 @@ def _source_slots(assignments, generated, *, temperature_model=None,
             # Focused u-RHS reports are source-slot aligned; do not append
             # SymPy-expanded leftovers as thousands of artificial lines.
             continue
-        row_match = re.search(r"\(var_(psi|u|zj|w|rho|vpar)\b", lhs)
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar)\b", lhs)
         if row_match is None:
             continue
         synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")

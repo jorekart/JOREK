@@ -37,7 +37,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--equation",
-        choices=("psi", "u", "zj", "w", "rho", "vpar"),
+        choices=("psi", "u", "zj", "w", "rho", "vpar", "rhoimp"),
         action="append",
         help="export only this equation; repeat for multiple equations",
     )
