@@ -176,7 +176,8 @@ def normalize_fortran_text(expression: str) -> str:
         result,
         flags=re.I,
     )
-    for function_name in ("particle_source", "heat_source"):
+    for function_name in ("particle_source", "heat_source_i", "heat_source_e",
+                          "heat_source"):
         result = re.sub(
             r"{}\s*\(\s*ms\s*,\s*mt\s*\)".format(function_name),
             function_name,

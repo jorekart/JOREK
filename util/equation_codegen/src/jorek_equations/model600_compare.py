@@ -751,6 +751,36 @@ def _normalize_model600_text(
         key: "({}+{})".format(pi_derivatives[key], pe_derivatives[key])
         for key in ("s", "t", "p")
     }
+    # The implicit heating floor of the ion and electron energy equations is
+    # written inline with ``min`` and ``exp``.  Name the two pieces so that
+    # the expression parser sees ordinary work values, and resolve the
+    # derivative of the exponential through its own value.
+    expression = re.sub(
+        r"\bmin\s*\(\s*Ti0\s*,\s*Tie_min_neg\s*\)", "Ti0_floor",
+        expression, flags=re.I,
+    )
+    expression = re.sub(
+        r"\bexp\s*\(\s*\(\s*Ti0_floor\s*-\s*Tie_min_neg\s*\)\s*/\s*"
+        r"\(\s*0\.5(?:d0)?\s*\*\s*Tie_min_neg\s*\)\s*\)",
+        "Ti_floor_exp", expression, flags=re.I,
+    )
+    expression = re.sub(
+        r"\bdTi_floor_exp\b", "(Ti_floor_exp/(0.5*Tie_min_neg))",
+        expression, flags=re.I,
+    )
+    expression = re.sub(r"\bdTi_floor\b", "1", expression, flags=re.I)
+    # Impurity negative-density correction, mirroring ``corr_neg_dens``.
+    expression = re.sub(
+        r"corr_neg_dens_imp\(\s*rhoimp0?\s*\)", "rhoimp0_corr",
+        expression, flags=re.I,
+    )
+    expression = re.sub(
+        r"\bcorr_neg_dens_imp\b", "rhoimp0_corr", expression, flags=re.I,
+    )
+    expression = re.sub(r"\bdrimp0_corr_dn\b", "1", expression, flags=re.I)
+    expression = re.sub(
+        r"\brimp0_corr\b", "rhoimp0_corr", expression, flags=re.I,
+    )
     # ``sqrt`` is the only Fortran intrinsic appearing in the exported volume
     # terms.  Rewrite it as a power so the expression parser needs no function
     # table.
@@ -774,6 +804,11 @@ def _normalize_model600_text(
         "Bgrad_rhoimp_rhoimp": "((rhoimp_x*ps0_y-rhoimp_y*ps0_x)/BigR)",
         "Bgrad_rhoimp_rhoimp_n": "(F0*rhoimp_p/BigR**2)",
         # Parallel-velocity work values.
+        # Ion-temperature parallel-gradient work values.
+        "Bgrad_Ti": "((F0*Ti0_p/BigR+Ti0_x*ps0_y-Ti0_y*ps0_x)/BigR)",
+        "Bgrad_Ti_psi": "((Ti0_x*psi_y-Ti0_y*psi_x)/BigR)",
+        "Bgrad_Ti_Ti": "((Ti_x*ps0_y-Ti_y*ps0_x)/BigR)",
+        "Bgrad_Ti_Ti_n": "(F0*Ti_p/BigR**2)",
         "Bgrad_vpar": "((F0*vpar0_p/BigR+vpar0_x*ps0_y-vpar0_y*ps0_x)/BigR)",
         "Bgrad_vpar_psi": "((vpar0_x*psi_y-vpar0_y*psi_x)/BigR)",
         "Bgrad_vpar_vpar": "((vpar_x*ps0_y-vpar_y*ps0_x)/BigR)",

@@ -14,6 +14,7 @@ from .model600 import (
     FIELDS,
     density_equation_rho,
     impurity_density_equation_rhoimp,
+    ion_energy_equation_Ti,
     parallel_velocity_equation_vpar,
     T,
     Te,
@@ -33,14 +34,14 @@ from .source_compare import parse_fortran_expression
 from .symbols import FieldRole, FieldValue, TestFunction, coefficient
 
 
-ROWS = ("psi", "u", "zj", "w", "rho", "vpar", "rhoimp")
+ROWS = ("psi", "u", "zj", "w", "rho", "vpar", "rhoimp", "ti")
 FIELD_NAMES = {
     field: name
     for field, name in zip(FIELDS, ("psi", "u", "zj", "w", "rho", "T", "vpar", "Ti", "Te", "rhon", "rhoimp"))
 }
 ASSIGNMENT_RE = re.compile(
     r"(?P<lhs>(?:rhs_ij(?:_k)?|amat(?:_n|_k|_kn|_nn)?)\s*\(\s*"
-    r"var_(?P<row>psi|u|zj|w|rho|rhoimp|vpar)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
+    r"var_(?P<row>psi|u|zj|w|rho|rhoimp|vpar|Ti)\b[^=]*?\))\s*=\s*(?P<rhs>.*)$",
     re.I,
 )
 
@@ -185,7 +186,9 @@ def _split_top_level(expression):
     tail = expression[start:].strip()
     if tail:
         terms.append(tail)
-    return terms
+    # ``lhs = lhs + &`` continued onto a line that itself starts with ``+``
+    # leaves a piece that is nothing but a sign.  It is not a term.
+    return [term for term in terms if term.strip(" +-")]
 
 
 def _normalized_text(text, *, single_temperature=False, two_temperature=False):
@@ -313,7 +316,7 @@ def _add_raw_rhs(pools, row, expression, *, previous_names=None):
 
 def _generated_pools(
     rows=ROWS, requested_lhs=None, *, include_neo=True, with_tite=None,
-    vpar_element_brackets=True,
+    element_brackets=True,
 ):
     """Generate implemented model-600 terms for the requested rows."""
 
@@ -349,7 +352,7 @@ def _generated_pools(
     if "vpar" in rows:
         equation = parallel_velocity_equation_vpar(
             with_TiTe=bool(with_tite),
-            element_brackets=vpar_element_brackets,
+            element_brackets=element_brackets,
         )
         _add_linearized(
             pools, "vpar",
@@ -370,6 +373,23 @@ def _generated_pools(
                 fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
             ),
             previous_names={"rhoimp": "delta_g(mp,var_rhoimp,ms,mt)"},
+        )
+    # The ion and electron energy equations exist only in the two-temperature
+    # branch of the element routine.
+    if "ti" in rows and with_tite:
+        equation = ion_energy_equation_Ti(
+            element_brackets=element_brackets,
+        )
+        _add_linearized(
+            pools, "ti",
+            equation.linearize(
+                fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
+            ),
+            previous_names={
+                "Ti": "delta_g(mp,var_Ti,ms,mt)",
+                "rho": "delta_rho_g",
+                "rhoimp": "delta_g(mp,var_rhoimp,ms,mt)",
+            },
         )
     if "zj" in rows:
         _add_linearized(
@@ -510,6 +530,24 @@ def _monomial_structure(term):
     return sp.cancel(term).as_coeff_Mul()[1]
 
 
+def _geometric_structure(term):
+    """Monomial structure with the cylindrical radius factored out.
+
+    The element routine and the generator sometimes disagree by a power of
+    ``BigR`` alone.  Keying on the rest of the monomial lets such a pair be
+    shown on one report line instead of drifting apart, which is how a wrong
+    power of the radius becomes visible in Meld.
+    """
+
+    structure = _monomial_structure(term)
+    radius = sp.Symbol("BigR")
+    exponent = sp.degree(sp.together(structure).as_numer_denom()[0], radius)
+    try:
+        return sp.cancel(structure / radius**exponent)
+    except Exception:
+        return structure
+
+
 def _combine_source_duplicates(source_monomials, generated_by_key):
     """Sum source monomials the generated side reports only once.
 
@@ -629,6 +667,7 @@ def _source_monomial_slots(assignments, generated_terms, *, temperature_model=No
 
     generated_by_key = defaultdict(list)
     generated_by_structure = defaultdict(list)
+    generated_by_radius = defaultdict(list)
     # For a source NEO block, keep only generated NEO terms in this local
     # alignment.  The complete generated pool also contains the ordinary
     # momentum terms, which must not appear as unrelated generated-only rows
@@ -687,6 +726,7 @@ def _source_monomial_slots(assignments, generated_terms, *, temperature_model=No
                 term = sp.cancel(term / sp.Symbol("Te0"))
             generated_by_key[_canonical_monomial(term)].append(term)
             generated_by_structure[_monomial_structure(term)].append(term)
+            generated_by_radius[_geometric_structure(term)].append(term)
 
     source_monomials = _combine_source_duplicates(
         source_monomials, generated_by_key
@@ -717,6 +757,10 @@ def _source_monomial_slots(assignments, generated_terms, *, temperature_model=No
             # differently is shown on the same report line as its generated
             # counterpart instead of drifting to the end of the block.
             match = _take(generated_by_structure, _monomial_structure(source_term))
+        if match is None:
+            # Still nothing: accept a partner that differs by a power of the
+            # cylindrical radius as well.
+            match = _take(generated_by_radius, _geometric_structure(source_term))
         generated = _canonical_monomial(match) if match is not None else ""
         slots.append((assignment, source_display, generated))
 
@@ -752,7 +796,7 @@ def _unmatched_generated_blocks(rows, source_lhs, generated, temperature_model):
     for lhs, terms in generated.items():
         if lhs in source_lhs or not terms:
             continue
-        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar)\b", lhs)
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar|ti)\b", lhs)
         if row_match is None or row_match.group(1) not in rows:
             continue
         synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")
@@ -1074,7 +1118,7 @@ def _source_slots(assignments, generated, *, temperature_model=None,
             # Focused u-RHS reports are source-slot aligned; do not append
             # SymPy-expanded leftovers as thousands of artificial lines.
             continue
-        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar)\b", lhs)
+        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar|ti)\b", lhs)
         if row_match is None:
             continue
         synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")
@@ -1137,7 +1181,9 @@ def export_model600_markdown(
     pass ``include_neo=True`` to include them.
     """
 
-    rows = tuple(equations or ROWS)
+    # The Fortran spells the temperature rows ``var_Ti``/``var_Te``; the
+    # exporter keys everything on the lower-case assignment name.
+    rows = tuple(row.lower() for row in (equations or ROWS))
     invalid = set(rows) - set(ROWS)
     if invalid:
         raise ValueError("Unknown model-600 equation(s): {}".format(", ".join(sorted(invalid))))
@@ -1158,18 +1204,19 @@ def export_model600_markdown(
             with_tite=with_tite,
         )
         generated_alternative = {}
-        if "vpar" in rows:
+        if "vpar" in rows or "ti" in rows:
             # The parallel-velocity row is the one whose source assignments
             # disagree among themselves about how to spell a poloidal
             # bracket, so build the other spelling as well.
-            alternative_pools = _generated_pools(
-                ("vpar",), requested_lhs=requested, include_neo=include_neo,
-                with_tite=with_tite, vpar_element_brackets=False,
+            alternative_rows = tuple(
+                row for row in ("vpar", "ti") if row in rows
             )
-            generated_alternative = {
-                lhs: terms for lhs, terms in alternative_pools.items()
-                if "var_vpar" in lhs.split(",")[0] or lhs.startswith("rhs_ij")
-            }
+            alternative_pools = _generated_pools(
+                alternative_rows, requested_lhs=requested,
+                include_neo=include_neo, with_tite=with_tite,
+                element_brackets=False,
+            )
+            generated_alternative = dict(alternative_pools)
         if assignment_filter is not None:
             source_assignments = [
                 assignment for assignment in source_assignments

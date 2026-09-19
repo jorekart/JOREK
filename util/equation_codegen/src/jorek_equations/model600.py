@@ -5,7 +5,7 @@ import sympy as sp
 from .equations import ConstraintEquation, EvolutionEquation
 from .external import external_function
 from .model199 import FIELDS as MODEL199_FIELDS
-from .model199 import j, omega, psi, rho, T, u, xjac
+from .model199 import GAMMA, gamma, j, omega, psi, rho, T, u, xjac
 from .operators import R, dR, dZ, dphi, ds, dt, element_bracket, dot, grad
 from .symbols import coefficient, field, freeze, test_function
 
@@ -866,3 +866,174 @@ def impurity_density_equation_rhoimp(
         B += R * v * source_imp_drift * xjac
     A = v * rhoimp * R * xjac
     return EvolutionEquation("model600_impurity_density", v, A, B)
+
+
+# ---------------------------------------------------------------------------
+# Ion energy equation (``var_Ti``)
+# ---------------------------------------------------------------------------
+
+heat_source_i = coefficient("heat_source_i")
+ZK_i_perp_num_psin = coefficient("ZK_i_perp_num_psin")
+tgnum_Ti = coefficient("tgnum_Ti")
+visco_par_heating = coefficient("visco_par_heating")
+implicit_heat_source = coefficient("implicit_heat_source")
+Tie_min_neg = coefficient("Tie_min_neg")
+aux_E0_Ti = coefficient("aux_E0_Ti")
+
+# Parallel ion heat conductivity and the perpendicular profile.  The element
+# routine supplies their temperature and density derivatives as work values.
+ZKi_par = external_function(
+    "ZKi_par600", arguments=("Ti",), derivatives={"Ti": "dZKi_par_dT"},
+    policy="piecewise_active", fortran_name="ZKi_par_T",
+)
+ZKi_perp = external_function(
+    "ZKi_prof600", arguments=("rho",), derivatives={"rho": "dZKi_prof_drho"},
+    policy="piecewise_active", fortran_name="ZKi_prof",
+)
+# The viscous-heating coefficient is evaluated at the electron temperature.
+visco_heating = external_function(
+    "visco_heating600", arguments=("Te",),
+    derivatives={"Te": "dvisco_dT_heating"},
+    policy="piecewise_active", fortran_name="visco_T_heating",
+)
+# Ion-electron energy exchange.
+Ti_e_exchange = external_function(
+    "dTi_e600", arguments=("Ti", "Te", "rho", "rhoimp"),
+    derivatives={
+        "Ti": "ddTi_e_dTi", "Te": "ddTi_e_dTe",
+        "rho": "ddTi_e_drho", "rhoimp": "ddTi_e_drhoimp",
+    },
+    policy="piecewise_active", fortran_name="dTi_e",
+)
+# Implicit heating floor for small temperatures.  The element routine writes
+# ``min(Ti0,Tie_min_neg)`` and the exponential of its normalized distance to
+# the floor inline; both are registered here so the tangent stays well
+# defined.  ``_normalize_model600_text`` maps the two spellings onto these
+# names and resolves their derivatives.
+Ti_floor = external_function(
+    "Ti_floor600", arguments=("Ti",), derivatives={"Ti": "dTi_floor"},
+    policy="piecewise_active", fortran_name="Ti0_floor",
+)
+Ti_floor_exp = external_function(
+    "Ti_floor_exp600", arguments=("Ti",),
+    derivatives={"Ti": "dTi_floor_exp"},
+    policy="piecewise_active", fortran_name="Ti_floor_exp",
+)
+# Negative-density correction of the impurity species.
+corr_neg_dens_imp = external_function(
+    "corr_neg_dens_imp", arguments=("rhoimp",),
+    derivatives={"rhoimp": "drimp0_corr_dn"},
+    policy="piecewise_active", fortran_name="corr_neg_dens_imp",
+)
+
+
+def ion_energy_equation_Ti(
+    *,
+    element_brackets=True,
+    include_impurities=True,
+    include_parallel_velocity=True,
+    include_tgnum=True,
+    include_friction=True,
+    include_heating=True,
+    include_auxiliary=True,
+):
+    """Return the model-600 ion energy equation for ``var_Ti``.
+
+    ``element_brackets`` selects the spelling of the poloidal advection
+    bracket, as in the parallel-velocity equation: the element routine writes
+    it in element coordinates in the residual and in the ``rho``, ``Ti`` and
+    ``rhoimp`` columns, and in physical coordinates in ``amat(var_Ti,var_u)``.
+    """
+
+    v = test_function("v")
+    alpha_i = alpha_i_state()
+    ion_density = rho + alpha_i * rhoimp if include_impurities else rho
+    corrected_ion_density = (
+        corr_neg_dens(rho) + alpha_i * corr_neg_dens_imp(rhoimp)
+        if include_impurities else corr_neg_dens(rho)
+    )
+    electron_density = (
+        rho + alpha_e_state(Te) * rhoimp if include_impurities else rho
+    )
+    ion_pressure = ion_density * Ti
+    bb2 = _parallel_norm(psi)
+    conduction_excess = ZKi_par(Ti) - ZKi_perp(rho)
+    advection_bracket = element_bracket if element_brackets else (
+        lambda left, right: xjac * _poloidal_cross(left, right)
+    )
+
+    B = (
+        v * R * heat_source_i * xjac
+        # Advection and compression of the ion pressure.
+        + v * R**2 * advection_bracket(ion_pressure, u)
+        + 2 * GAMMA * v * R * ion_pressure * dZ(u) * xjac
+        # Perpendicular and parallel heat conduction.
+        - conduction_excess * R / bb2
+        * _b_dot_grad(v) * _b_dot_grad(Ti) * xjac
+        - ZKi_perp(rho) * R * _perpendicular_diffusion(v, Ti) * xjac
+        - ZK_i_perp_num_psin * _laplacian(v) * _laplacian(Ti) * R * xjac
+    )
+    if include_parallel_velocity:
+        B += (
+            -v * F0 / R * vpar * dphi(ion_pressure) * xjac
+            - v * vpar * element_bracket(ion_pressure, psi)
+            - GAMMA * v * ion_pressure * (
+                element_bracket(vpar, psi) + F0 / R * dphi(vpar) * xjac
+            )
+        )
+    if include_tgnum:
+        timestep = coefficient("tstep")
+        B += (
+            -tgnum_Ti * sp.Rational(1, 4) * R**3
+            * _poloidal_cross(ion_pressure, u) * _poloidal_cross(v, u)
+            * xjac * timestep
+            - tgnum_Ti * sp.Rational(1, 4) * R * vpar**2
+            * _b_dot_grad(ion_pressure) * _b_dot_grad(v) * xjac * timestep
+        )
+    if include_friction:
+        # Kinetic energy released by the particle sources.
+        released = (
+            electron_density * rhon * Sion_rate(Te)
+            + particle_source + source_pellet
+            + source_bg_drift + source_imp_drift
+        )
+        B += (
+            v * R * (GAMMA - 1) / 2
+            * (vpar**2 * bb2 + _velocity_norm(u)) * released * xjac
+        )
+    if include_heating:
+        grad_vpar = grad(vpar)
+        B += (GAMMA - 1) * R * visco_par_heating * xjac * (
+            v * dot(grad_vpar, grad_vpar) + vpar * dot(grad(v), grad_vpar)
+        )
+        heating = visco_heating(Te)
+        B += (
+            -(GAMMA - 1) * v * heating * R**3 * visco_fact_old
+            * dot(grad(u), grad(omega)) * xjac
+            - (GAMMA - 1) * v * heating * 2 * R**2 * visco_fact_new
+            * omega * dR(u) * xjac
+            - (GAMMA - 1) * v * heating * R * visco_fact_new
+            * (
+                dR(u) * dR(dphi(dphi(u))) + dZ(u) * dZ(dphi(dphi(u)))
+            ) * xjac
+        )
+    B += (
+        # Ion-electron energy exchange.
+        v * R * Ti_e_exchange(Ti, Te, rho, rhoimp) * xjac
+        # Implicit heating floor for small temperatures.
+        + implicit_heat_source * (gamma - 1) * v * R * xjac * (
+            sp.Rational(1, 2) * Tie_min_neg * (1 + Ti_floor_exp(Ti))
+            - Ti_floor(Ti)
+        )
+        # Recombination sink.
+        - v * Ti * R * corr_neg_dens(rho)**2 * Srec_rate(Te) * xjac
+    )
+    if include_auxiliary:
+        B += (
+            v * R * aux_E0_Ti * xjac
+            + (gamma - 1) * sp.Rational(1, 2) * v * aux_rho0
+            * vpar**2 * bb2 * R * xjac
+            - (gamma - 1) * v * aux_mom_par0 * vpar * R * xjac
+        )
+    A = v * corrected_ion_density * Ti * R * xjac
+    return EvolutionEquation("model600_ion_energy", v, A, B)

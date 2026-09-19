@@ -19,8 +19,8 @@ rewriting every `_s`/`_t` derivative through the chain rule, because the
 element routine spells the same poloidal bracket sometimes as
 `a_s*b_t - a_t*b_s` and sometimes as `xjac*(a_x*b_y - a_y*b_x)` — even between
 a residual and its own tangent.  A block whose two sides differ only by that
-rewrite is reported as `SAME`. At the time of writing, 127 of the
-162 exported blocks are identical; the remaining 35 are the ten findings
+rewrite is reported as `SAME`. At the time of writing, 144 of the
+186 exported blocks are identical; the remaining 42 are the twelve findings
 below. Nothing in this list has been fixed in the Fortran.
 
 Status of the five exported rows:
@@ -34,14 +34,15 @@ Status of the five exported rows:
 | `rho` | reproduced | findings 1, 4 and 5 |
 | `vpar` | findings 6 and 9 | findings 4, 6, 7, 8 and 9 |
 | `rhoimp` | finding 10 | reproduced |
+| `Ti` | reproduced | findings 11 and 12 |
 
 Every source term of every row is reproduced by the generator. Apart from
 findings 3, 6 and 9, the differences are all terms the generator produces and
 the element routine does not.
 
-Findings 3, 6, 9 and 10 are disagreements about a coefficient or a sign rather
-than omissions, and finding 10 is the only one that sits in a residual rather
-than in a tangent.
+Findings 3, 6, 9, 10 and 11 are disagreements about a coefficient, a power of
+`BigR` or a sign rather than omissions, and finding 10 is the only one that
+sits in a residual rather than in a tangent.
 
 The NEO branch is excluded from the default reports (`--include-neo` enables
 it) and has not been audited here.
@@ -554,6 +555,102 @@ makes the impurity Jacobian inconsistent with its own residual.
 
 ---
 
+## Finding 11 — the tgnum_Ti poloidal-velocity tangent is a factor BigR too small
+
+**Where:** `amat(var_Ti,var_u)`, `amat(var_Ti,var_rho)`, `amat(var_Ti,var_Ti)`
+and `amat(var_Ti,var_rhoimp)`.
+
+**What happens:** the first Taylor-Galerkin term of the ion energy residual
+carries `BigR**3`,
+
+```fortran
+- tgnum_Ti* 0.25d0 * BigR**3 * Ti0 * ((r0_x+alpha_i*rimp0_x)*u0_y - (r0_y+alpha_i*rimp0_y)*u0_x) &
+                   * ( v_x * u0_y - v_y * u0_x) * xjac * tstep * tstep * factor(var_Ti,8) &
+- tgnum_Ti* 0.25d0 * BigR**3 * (r0+alpha_i*rimp0) * (Ti0_x * u0_y - Ti0_y * u0_x)                &
+                   * ( v_x * u0_y - v_y * u0_x) * xjac * tstep * tstep * factor(var_Ti,8) &
+```
+
+but every one of its tangents carries `BigR**2`, for example
+
+```fortran
+amat(var_Ti,var_u) = ... &
+   + tgnum_Ti* 0.25d0 * BigR**2 * Ti0* ((r0_x+alpha_i*rimp0_x) * u_y - (r0_y+alpha_i*rimp0_y) * u_x) &
+                      * ( v_x * u0_y - v_y * u0_x) * xjac * theta*tstep*tstep &
+```
+
+The check is exact: every source line of the four affected blocks becomes its
+generated counterpart under the single substitution `BigR**2 -> BigR**3`, and
+nothing else differs.
+
+The density equation writes the same Taylor-Galerkin structure with
+`tgnum_rho` and uses `BigR**3` in its residual *and* in all of its tangents
+(`amat(var_rho,var_u)`, `amat(var_rho,var_rho)`), which fixes the intended
+power. The second `tgnum_Ti` group, the one carrying `1/BigR * vpar0**2`, is
+consistent between residual and tangents.
+
+**Suggested fix:** replace `BigR**2` by `BigR**3` in the ten `tgnum_Ti`
+poloidal-velocity tangent terms of the four blocks listed above.
+
+**Scale:** 24 monomials in `amat(var_Ti,var_u)`, 16 in `amat(var_Ti,var_Ti)`,
+8 in `amat(var_Ti,var_rho)` and 8 in `amat(var_Ti,var_rhoimp)`.
+
+---
+
+## Finding 12 — three smaller omissions in the ion energy tangents
+
+All three are terms the generator produces and `mod_elt_matrix_fft.f90` does
+not.
+
+**(a) The kinetic-coupling term does not differentiate `BB2`.**
+`amat(var_Ti,var_psi)` differentiates the flux dependence of `BB2` for the
+friction sources,
+
+```fortran
+- v * ((GAMMA - 1.) / BigR) * vpar0**2 * (psi_x * ps0_x + psi_y * ps0_y) * ((r0+alpha_e*rimp0)*rn0*Sion_T) * xjac * theta * tstep &
+- v * ((GAMMA - 1.) / BigR) * vpar0**2 * (psi_x * ps0_x + psi_y * ps0_y) * (particle_source + source_pellet + source_bg_drift + source_imp_drift) * xjac * theta * tstep &
+```
+
+but the residual carries one more term of exactly the same shape,
+
+```fortran
++ (gamma-1.d0)*0.5d0 * v * aux_rho0 * vpar0**2 * BB2 * BigR * xjac * tstep * factor(var_Ti,16) &
+```
+
+whose `BB2_psi` contribution is absent. 4 monomials.
+
+**(b) The perpendicular conductivity's density derivative is missing from the
+toroidal channel.** `amat(var_Ti,var_rho)` carries both
+
+```fortran
+- dZKi_prof_drho * rho * BigR / BB2 * Bgrad_T_star * Bgrad_Ti  * xjac * theta * tstep &
++ dZKi_prof_drho * rho * BigR * (v_x*Ti0_x + v_y*Ti0_y)        * xjac * theta * tstep
+```
+
+while `amat_k(var_Ti,var_rho)` contains only `tgnum_Ti` terms, although
+`rhs_ij_k(var_Ti)` has the matching `Bgrad_T_k_star` and `v_p*Ti0_p`
+contributions. `ZKi_prof` depends on the density
+(`ZKi_prof = get_zk_iperp(psi_norm) * max(r0,zkperp_density_floor)`), so the
+`k` channel needs the same two terms. 4 monomials.
+
+**(c) The recombination sink does not differentiate its rate.** The residual
+ends with
+
+```fortran
+- v * Ti0 * BigR * r0_corr * r0_corr  * Srec_T * xjac * tstep * factor(var_Ti,18)
+```
+
+and `Srec_T` is a function of the electron temperature — `amat(var_rho,var_Te)`
+uses `dSrec_dT` for the same rate — but `amat(var_Ti,var_Te)` carries only the
+`dSion_dT` friction terms. The missing entry is
+
+```fortran
++ v * BigR * Ti0 * r0_corr * r0_corr * dSrec_dT * Te * xjac * theta * tstep
+```
+
+1 monomial. This is the same family as finding 5.
+
+---
+
 ## Reproducing
 
 ```bash
@@ -571,9 +668,9 @@ residual with a negative sign is a term the linearization produces and the
 element routine does not.
 
 In the aligned Markdown reports, a blank cell on the generated side is now a
-genuine missing term: across all 162 blocks the only source lines without a
-generated counterpart are the 7 of finding 3, the 6 of finding 6 and the 4 of
-finding 9.
+genuine missing term: across all 186 blocks every source line has a generated
+counterpart on the same line, including the ones that differ only by a
+coefficient (findings 3, 6 and 9) or by a power of `BigR` (finding 11).
 
 Residual composition of the parallel-velocity blocks, for orientation:
 
