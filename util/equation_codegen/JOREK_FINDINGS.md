@@ -900,6 +900,22 @@ hide exactly the kind of error they represent.
 
 ---
 
+## Regression benchmark
+
+The inventory above is frozen in
+[`reference/model600_discrepancies.json`](reference/model600_discrepancies.json)
+and checked by [`final_test.py`](final_test.py).  Each block of the reference
+names the findings it belongs to, so a failure points straight back at this
+document:
+
+```bash
+./final_test.py
+```
+
+Fixing any finding in the Fortran will make the benchmark fail with `-` lines
+for the monomials that stopped disagreeing.  That is the intended signal:
+re-run with `--update`, and strike the finding from this file.
+
 ## Reproducing
 
 ```bash

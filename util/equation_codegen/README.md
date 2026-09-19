@@ -124,6 +124,38 @@ equation's electron pressure use `T/2` in the one-temperature branch. This
 replaced two earlier "legacy tangent" overrides that reproduced JOREK's
 factor of one half by hand; that half is physical, not a legacy quirk.
 
+## The `final_test` benchmark
+
+The discrepancies between the element routine and the generated linearization
+are frozen in
+[`reference/model600_discrepancies.json`](reference/model600_discrepancies.json).
+For every assignment that disagrees, it records the monomials the element
+routine has and the generator does not, the monomials the generator has and
+the element routine does not, and which findings of
+[`JOREK_FINDINGS.md`](JOREK_FINDINGS.md) that block belongs to. Those two
+lists are the complete statement of the disagreement: everything else in the
+reports is identical on both sides.
+
+```bash
+./final_test.py             # recompute and compare; exit 0 on a match
+./final_test.py --update    # rewrite the reference after an intended change
+```
+
+The benchmark exports the reports into a temporary directory, so it never
+touches `reports/`. It takes a few minutes, which is why it is a standalone
+script rather than part of `python -m unittest discover`; the unit tests cover
+its comparison logic and the integrity of the reference file.
+
+A failure prints one line per changed monomial: `-` for a discrepancy the
+reference expects that the run no longer produces, `+` for a new one. Both
+directions matter. A `-` line means either that somebody fixed the Fortran, in
+which case update the reference and strike the finding from
+`JOREK_FINDINGS.md`, or that the generated equation drifted and stopped
+reproducing a term it used to reproduce. A `+` line means a new disagreement:
+a change in the element routine, or a regression in the DSL. The script also
+warns when `mod_elt_matrix_fft.f90` no longer has the SHA-256 recorded in the
+reference, which usually explains the rest of the output.
+
 ## Known JOREK differences
 
 With the conventions above, all nine rows — `psi`, `u`, `zj`, `w`, `rho`,
