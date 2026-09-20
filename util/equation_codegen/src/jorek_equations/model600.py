@@ -28,6 +28,7 @@ rhon = field("rhon", fortran_current="rn0", fortran_trial="rhon")
 
 rhoimp = field("rhoimp", fortran_current="rimp0", fortran_trial="rhoimp")
 
+FIELDS = MODEL199_FIELDS + (vpar, Ti, Te, rhon, rhoimp)
 
 # -------------------------------------------------------------------------
 # Scalar work values
@@ -40,8 +41,6 @@ tauIC = coefficient("tauIC")
 tstep = coefficient("tstep")
 r0_corr = coefficient("r0_corr")
 F0 = coefficient("F0")
-
-FIELDS = MODEL199_FIELDS + (vpar, Ti, Te, rhon, rhoimp)
 
 factor_psi = tuple(coefficient("factor_psi_{}".format(index)) for index in range(1, 7))
 
@@ -387,7 +386,8 @@ def _velocity_norm(value=u):
 def _poloidal_cross(left, right):
     return dR(left) * dZ(right) - dZ(left) * dR(right)
 
-def _parallel_norm(flux):
+def _B2(flux):
+    """Total magnetic field squared (B^2)"""
     return (F0**2 + grad(flux)[0]**2 + grad(flux)[1]**2) / R**2
 
 def _b_dot_grad(value, flux=psi):
@@ -456,7 +456,7 @@ def _parallel_diffusion(v, density, excess):
     """Anisotropic diffusion of a particle density along the field."""
 
     return (
-        -excess * R / _parallel_norm(psi)
+        -excess * R / _B2(psi)
         * _b_dot_grad(v) * _b_dot_grad(density) * xjac
     )
 
@@ -509,7 +509,7 @@ def _heat_conduction(v, temperature, parallel, perpendicular, numerical):
     """Parallel, perpendicular and numerical conduction of one temperature."""
 
     return (
-        -(parallel - perpendicular) * R / _parallel_norm(psi)
+        -(parallel - perpendicular) * R / _B2(psi)
         * _b_dot_grad(v) * _b_dot_grad(temperature) * xjac
         - perpendicular * R * _perpendicular_diffusion(v, temperature) * xjac
         - numerical * _laplacian(v) * _laplacian(temperature) * R * xjac
@@ -549,7 +549,7 @@ def _friction_heating(v, released):
 
     return (
         v * R * (GAMMA - 1) / 2
-        * (vpar**2 * _parallel_norm(psi) + _velocity_norm(u)) * released * xjac
+        * (vpar**2 * _B2(psi) + _velocity_norm(u)) * released * xjac
     )
 
 
@@ -575,7 +575,7 @@ def _kinetic_coupling(v):
 
     return (
         (gamma - 1) * sp.Rational(1, 2) * v * aux_rho0
-        * vpar**2 * _parallel_norm(psi) * R * xjac
+        * vpar**2 * _B2(psi) * R * xjac
         - (gamma - 1) * v * aux_mom_par0 * vpar * R * xjac
     )
 
@@ -616,7 +616,7 @@ def _ionization_energy_transport(v, energy, temperature):
 
     d_par_excess = D_par_local + D_par_sc_num * tau_sc - D_prof
     d_par_excess_imp = D_par_local_imp + D_par_imp_sc_num * tau_sc - D_prof_imp
-    bb2 = _parallel_norm(psi)
+    bb2 = _B2(psi)
     return (GAMMA - 1) * (
         v * R**2 * element_bracket(energy, u)
         + 2 * v * R * energy * dZ(u) * xjac
@@ -640,56 +640,54 @@ def _ionization_energy_transport(v, energy, temperature):
 # In the order of the element routine.
 def induction_equation_1(
     *,
-    include_pressure_coupling: bool = True,
+    include_diamag: bool = True,
     include_runaway_coupling: bool = True,
     with_TiTe: bool = False,
 ):
-    """Return model-600 ``rhs(var_psi)`` in integrated weak form.
-
-    The two keyword switches correspond to the optional pressure and kinetic
-    runaway-electron terms in ``mod_elt_matrix_fft.f90``.  The ``factor``
-    switches are represented by independent coefficients so term-by-term
-    generation can preserve the source routine's decomposition.
-    """
+    """Weak form of the induction equation for var_psi."""
 
     v = test_function("v")
-    thermal = Te if with_TiTe else T
-    # In model600 ``r0_corr`` is the corrected density, not an independent
-    # frozen coefficient.  The equation below uses the correction only in
-    # the pressure coupling; resistivity still depends on the physical rho.
-    corrected_rho = corr_neg_dens(rho)
-    psi_term = (
-        v * eta(thermal, rho, rhoimp)
-        * (j - coefficient("current_source") - Jb) / R * xjac
+    T_or_Te = Te if with_TiTe else T
+
+    # Time derivative
+    A = v * psi / R * xjac    
+
+    # RHS
+    B = (
+        # -B.grad u
+        + v * element_bracket(psi, u) - v * F0 / R * dphi(u) * xjac
+
+        # eta*j
+        + v * eta(T_or_Te, rho, rhoimp)*(j - coefficient("current_source") - Jb) / R * xjac
+
+        # hyper-resistivity
+        + eta_num_T(T_or_Te) * dot(grad(v), grad(j)) * xjac
     )
-    advection = v * element_bracket(psi, u) - v * F0 / R * dphi(u) * xjac
-    resistive = eta_num_T(thermal) * dot(grad(v), grad(j)) * xjac
-    base_B = psi_term + advection + resistive
-    B = base_B
-    if include_pressure_coupling:
+
+    if include_runaway_coupling:
+        # -eta*j_RE
+        B += -v * eta(T_or_Te, rho, rhoimp) * aux_jre_ind / R * xjac
+
+
+    if include_diamag:
+        # In model600 ``r0_corr`` is the corrected density > 0, to avoid
+        # divergence in diamag term denominator.
+        rho_corr = corr_neg_dens(rho)
         # ``construct_pressure`` builds Pe0 = (r0 + rimp0*alpha_e)*Te0 in both
         # temperature models.  The one-temperature model evolves the total
         # temperature and supplies Te0 = T0/2, so the electron temperature is
         # half of the evolved field there.  alpha_e_temperature carries the
         # closure's d(alpha_e*Te)/dTe = alpha_e_bis convention.
-        electron_temperature = Te if with_TiTe else T / 2
-        Pe = (
-            rho * electron_temperature
-            + rhoimp * alpha_e_temperature(electron_temperature)
+        Te_gen = Te if with_TiTe else T / 2
+
+        Pe = rho * Te_gen + rhoimp * alpha_e_temperature(Te_gen)
+
+        # B.grad Pe diamagnetic term
+        B += 2*(
+            - v * tauIC / (rho_corr * _B2(psi)) * F0**2 / R**2 * element_bracket(psi, Pe)
+            + v * tauIC / (rho_corr * _B2(psi)) * F0**3 / R**3 * dphi(Pe) * xjac
         )
-        diamagnetic_core = (
-            -v * tauIC / (corrected_rho * _parallel_norm(psi))
-            * F0**2 / R**2 * element_bracket(psi, Pe)
-            + v * tauIC / (corrected_rho * _parallel_norm(psi))
-            * F0**3 / R**3 * dphi(Pe) * xjac
-        )
-        B += 2 * diamagnetic_core
-    if include_runaway_coupling:
-        runaway = -v * eta(thermal, rho, rhoimp) * aux_jre_ind / R * xjac
-        B += runaway
-    A = v * psi / R * xjac
-    # The one-temperature electron temperature Te0 = T0/2 is carried by the
-    # residual itself, so the temperature column needs no tangent override.
+
     return EvolutionEquation("model600_induction", v, A, B)
 
 def momentum_equation_2(
@@ -857,7 +855,7 @@ def momentum_equation_2(
             # in the Newton tangent.  The poloidal ``Btheta2`` factor is
             # differentiated separately below, but the numerator must not
             # contribute a ``BB2_psi`` variation.
-            amu_neo_prof * _parallel_norm(freeze(psi))
+            amu_neo_prof * _B2(freeze(psi))
             / (btheta2 + epsil)**2
             * dot(grad_psi, grad_v) * neo_force * R * xjac
         )
@@ -963,7 +961,7 @@ def parallel_velocity_equation_vpar(*, with_TiTe=False, element_brackets=True):
 
     v = test_function("v")
     thermal = Te if with_TiTe else T
-    bb2 = _parallel_norm(psi)
+    bb2 = _B2(psi)
     pressure = rho * (Ti + Te) if with_TiTe else rho * T
     if with_TiTe:
         pressure += rhoimp * (alpha_i_state() * Ti + alpha_e_temperature(Te))
