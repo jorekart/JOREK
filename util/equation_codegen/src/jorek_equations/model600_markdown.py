@@ -318,7 +318,7 @@ def _add_raw_rhs(pools, row, expression, *, previous_names=None):
 
 def _generated_pools(
     rows=ROWS, *, include_neo=True, with_tite=None,
-    element_brackets=True,
+    st_form=True,
 ):
     """Generate implemented model-600 terms for the requested rows."""
 
@@ -353,7 +353,7 @@ def _generated_pools(
     if "vpar" in rows:
         equation = parallel_velocity_equation_vpar(
             with_TiTe=bool(with_tite),
-            element_brackets=element_brackets,
+            st_form=st_form,
         )
         _add_linearized(
             pools, "vpar",
@@ -379,7 +379,7 @@ def _generated_pools(
     # branch of the element routine.
     if "ti" in rows and with_tite:
         equation = ion_energy_equation_Ti(
-            element_brackets=element_brackets,
+            st_form=st_form,
         )
         _add_linearized(
             pools, "ti",
@@ -394,7 +394,7 @@ def _generated_pools(
         )
     if "te" in rows and with_tite:
         equation = electron_energy_equation_Te(
-            element_brackets=element_brackets,
+            st_form=st_form,
         )
         _add_linearized(
             pools, "te",
@@ -409,7 +409,7 @@ def _generated_pools(
         )
     # The single-temperature energy equation exists only in the other branch.
     if "t" in rows and not with_tite:
-        equation = total_energy_equation_T(element_brackets=element_brackets)
+        equation = total_energy_equation_T(st_form=st_form)
         _add_linearized(
             pools, "t",
             equation.linearize(
@@ -1104,7 +1104,7 @@ def export_model600_markdown(
             alternative_pools = _generated_pools(
                 alternative_rows,
                 include_neo=include_neo, with_tite=with_tite,
-                element_brackets=False,
+                st_form=False,
             )
             generated_alternative = dict(alternative_pools)
         slots = _source_slots(

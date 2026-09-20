@@ -18,7 +18,7 @@ from jorek_equations import (  # noqa: E402
     dR,
     dZ,
     dphi,
-    element_bracket,
+    poiss_bracket_st,
     expand_brackets,
     expand_derivatives,
     external_function,

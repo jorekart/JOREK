@@ -114,10 +114,22 @@ def bracket(left, right):
     return PoloidalBracket(left, right)
 
 
-def element_bracket(left, right):
+def poiss_bracket_st(left, right):
     """Return ``left_s right_t - left_t right_s`` in element coordinates."""
 
     return ds(left) * dt(right) - dt(left) * ds(right)
+
+
+def poiss_bracket(left, right):
+    """Return ``left_R right_Z - left_Z right_R`` in physical coordinates."""
+
+    return dR(left) * dZ(right) - dZ(left) * dR(right)
+
+
+def laplacian(value):
+    """Return the axisymmetric (R,Z) Laplacian of ``value``."""
+
+    return dR(dR(value)) + dZ(dZ(value)) + dR(value) / R
 
 
 def expand_brackets(expression):

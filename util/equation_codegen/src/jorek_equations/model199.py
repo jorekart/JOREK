@@ -4,7 +4,7 @@ import sympy as sp
 
 from .equations import ConstraintEquation, EvolutionEquation
 from .external import external_function
-from .operators import R, bracket, dR, dZ, dphi, dot, element_bracket, grad
+from .operators import R, bracket, dR, dZ, dphi, dot, laplacian, poiss_bracket_st, grad
 from .symbols import coefficient, field, freeze, test_function
 
 
@@ -50,10 +50,6 @@ eta_ohmic = external_function(
     "eta_ohmic", arguments=("T",), derivatives={"T": "deta_dT_ohm"},
     policy="piecewise_active", fortran_name="eta_T_ohm"
 )
-
-
-def _laplacian(value):
-    return dR(dR(value)) + dZ(dZ(value)) + dR(value) / R
 
 
 def _rho_hat():
@@ -114,12 +110,12 @@ def momentum_equation_2():
     B = (
         -sp.Rational(1, 2) * _vv2()
         * (dR(v) * dZ(rho_hat) - dZ(v) * dR(rho_hat)) * xjac
-        - rho_hat * R**2 * omega * element_bracket(v, u)
-        + v * element_bracket(psi, j)
+        - rho_hat * R**2 * omega * poiss_bracket_st(v, u)
+        + v * poiss_bracket_st(psi, j)
         - visco(T) * R * dot(grad(v), grad(omega)) * xjac
         - v * eps_cyl * F0 / R * dphi(j) * xjac
-        + R**2 * element_bracket(v, pressure)
-        - visco_num * _laplacian(v) * _laplacian(omega) * xjac
+        + R**2 * poiss_bracket_st(v, pressure)
+        - visco_num * laplacian(v) * laplacian(omega) * xjac
     )
     A = -R * rho_hat_time * dot(grad(v), grad(u)) * xjac
     return EvolutionEquation("model199_momentum", v, A, B)
@@ -148,7 +144,7 @@ def density_equation_5():
     rho_hat = R**2 * rho
     B = (
         v * R * particle_source * xjac
-        + v * R**2 * element_bracket(rho, u)
+        + v * R**2 * poiss_bracket_st(rho, u)
         + 2 * v * R * rho * dZ(u) * xjac
         - (D_par - D_prof) * R / _parallel_norm()
         * _parallel_gradient(v, psi) * _parallel_gradient(rho, psi) * xjac
@@ -165,7 +161,7 @@ def temperature_equation_6():
     v = test_function("v")
     B = (
         v * R * heat_source * xjac
-        + v * R**2 * element_bracket(T, u)
+        + v * R**2 * poiss_bracket_st(T, u)
         + 2 * (GAMMA - 1) * v * R * T * dZ(u) * xjac
         - (ZK_par - ZK_prof) * R / _parallel_norm()
         * _parallel_gradient(v, psi) * _parallel_gradient(T, psi) * xjac
