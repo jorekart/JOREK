@@ -21,6 +21,7 @@ over.
 import argparse
 import hashlib
 import json
+import re
 import sys
 import tempfile
 from collections import Counter, OrderedDict
@@ -46,13 +47,21 @@ def block_name(key):
     return "{} | {} | #{}".format(section, lhs, repeat)
 
 
-def measure(source_path=SOURCE):
+def _row_of(name):
+    """The equation row a block name belongs to, e.g. ``ti`` in amat(var_ti,..)."""
+
+    match = re.search(r"\(var_([a-z]+)", name.split("|")[1])
+    return match.group(1) if match else ""
+
+
+def measure(source_path=SOURCE, rows=None):
     """Export the reports and return the discrepancies of every block."""
 
     with tempfile.TemporaryDirectory() as folder:
         folder = Path(folder)
         source_report, generated_report = export_model600_markdown(
             source_path, folder / "source.md", folder / "generated.md",
+            equations=rows,
         )
         source = read_blocks(source_report)
         generated = read_blocks(generated_report)
@@ -145,13 +154,21 @@ def main():
         help="element routine to read (default: the model-600 one)",
     )
     parser.add_argument(
+        "--equation", action="append", dest="rows", metavar="ROW",
+        help="check only this row; repeat for several.  A partial run compares "
+             "only the blocks of the rows it exported, which is meant for "
+             "iterating, not for signing off a change",
+    )
+    parser.add_argument(
         "--update", action="store_true",
         help="rewrite the reference from the current tree",
     )
     arguments = parser.parse_args()
 
+    if arguments.rows and arguments.update:
+        parser.error("--update needs a full run; drop --equation")
     print("Exporting model-600 terms and collecting discrepancies ...")
-    blocks = measure(arguments.source)
+    blocks = measure(arguments.source, arguments.rows)
     source_only = sum(len(item["source_only"]) for item in blocks.values())
     generated_only = sum(len(item["generated_only"]) for item in blocks.values())
     print("  {} block(s) disagree: {} source-only and {} generated-only "
@@ -191,6 +208,15 @@ def main():
         print("      reference sha256 {}".format(reference.get("source_sha256")))
         print("      current   sha256 {}".format(digest))
 
+    if arguments.rows:
+        wanted = {row.lower() for row in arguments.rows}
+        reference = dict(reference)
+        reference["blocks"] = {
+            name: item for name, item in reference["blocks"].items()
+            if _row_of(name) in wanted
+        }
+        print("  comparing the {} recorded block(s) of row(s) {}".format(
+            len(reference["blocks"]), ", ".join(sorted(wanted))))
     problems = compare(reference, blocks)
     if problems:
         print("\nFINAL TEST: FAILED — {} block(s) differ from the "

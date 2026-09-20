@@ -21,11 +21,6 @@ def main():
         help="export only this equation; repeat the option for multiple equations",
     )
     parser.add_argument(
-        "--assignment",
-        action="append",
-        help="export only this assignment, e.g. 'rhs_ij(var_u)'; repeat to select more",
-    )
-    parser.add_argument(
         "--include-neo",
         action="store_true",
         help="include NEO terms (omitted by default for the base-equation comparison)",
@@ -37,7 +32,6 @@ def main():
         reports / "model600_fortran_terms.md",
         reports / "model600_generated_terms.md",
         equations=args.equation,
-        assignments=args.assignment,
         include_neo=args.include_neo,
     )
     print("Wrote {}".format(source))

@@ -30,9 +30,9 @@ from .model600 import (
     u,
     vorticity_constraint_equation_w,
 )
-from .model600_compare import _normalize_model600_text
+from .fortran_source import normalize_model600_text
 from .operators import SpatialDerivative, expand_derivatives, phi
-from .source_compare import parse_fortran_expression
+from .fortran_source import parse_fortran_expression
 from .symbols import FieldRole, FieldValue, TestFunction, coefficient
 
 
@@ -199,7 +199,7 @@ def _normalized_text(text, *, single_temperature=False, two_temperature=False):
         flags=re.I,
     )
     text = re.sub(r"\bBigR_x\b", "1", text, flags=re.I)
-    result = _normalize_model600_text(
+    result = normalize_model600_text(
         text,
         single_temperature=single_temperature,
         two_temperature=two_temperature,
@@ -317,13 +317,12 @@ def _add_raw_rhs(pools, row, expression, *, previous_names=None):
 
 
 def _generated_pools(
-    rows=ROWS, requested_lhs=None, *, include_neo=True, with_tite=None,
+    rows=ROWS, *, include_neo=True, with_tite=None,
     element_brackets=True,
 ):
     """Generate implemented model-600 terms for the requested rows."""
 
     rows = set(rows)
-    requested_lhs = set(requested_lhs or ())
     pools = defaultdict(list)
     timestep = coefficient("tstep")
     theta = coefficient("theta")
@@ -431,16 +430,10 @@ def _generated_pools(
             pools, "w", vorticity_constraint_equation_w().linearize(fields=FIELDS)
         )
     if "u" in rows:
-        only_u_rhs = requested_lhs and requested_lhs <= {"rhs_ij(var_u)"}
         temperature_branches = (False, True) if with_tite is None else (with_tite,)
         for with_tite in temperature_branches:
             equation = momentum_equation_2(
                 with_TiTe=with_tite,
-                include_diamagnetic=True,
-                include_conservative=True,
-                include_tgnum=True,
-                include_neutrals=True,
-                include_impurities=True,
                 include_neo=include_neo,
             )
             # The source routine contains both the one- and two-temperature
@@ -450,17 +443,14 @@ def _generated_pools(
                 pools, "u", _raw_evolution_rhs(equation, FIELDS, timestep, zeta),
                 previous_names={"u": "delta_u", "rho": "delta_rho_g"},
             )
-            if not only_u_rhs:
-                result = equation.linearize(
-                    fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
-                )
-                _add_linearized(
-                    pools, "u", result,
-                    previous_names={"u": "delta_u", "rho": "delta_rho_g"},
-                    include_rhs=False,
-                )
-            if only_u_rhs and with_tite:
-                break
+            result = equation.linearize(
+                fields=FIELDS, timestep=timestep, theta=theta, zeta=zeta
+            )
+            _add_linearized(
+                pools, "u", result,
+                previous_names={"u": "delta_u", "rho": "delta_rho_g"},
+                include_rhs=False,
+            )
     # For the momentum report retain repeated terms: the Fortran routine has
     # separate base/extension assignments whose identical monomials must be
     # available more than once for source-row alignment.  Other rows retain
@@ -473,70 +463,7 @@ def _generated_pools(
     }
 
 
-def _canonical_candidates(text):
-    candidates = set()
-    for terms in _parsed_terms(text):
-        if len(terms) == 1:
-            candidates.add(terms[0])
-    return candidates
 
-
-def _expanded_candidates(text):
-    candidates = set()
-    for terms in _parsed_terms(text):
-        candidates.update(terms)
-    return candidates
-
-
-def _u_rhs_order_key(text):
-    """Order factored generated momentum terms like the Fortran RHS."""
-
-    lowered = text.lower()
-    # Specific extension signatures must precede broad inertia/conservative
-    # signatures because their expanded products contain the same factors.
-    specific = (
-        ("fact_conservative_u" in lowered and "vpar0" in lowered, 19),
-        ("particle_source" in lowered or "source_pellet" in lowered, 18),
-        ("fact_conservative_u" in lowered and "tgnum_u" in lowered, 10),
-        ("dvisco_dt" in lowered, 14),
-        ("visco_t" in lowered and "v_xx" in lowered and "tauic" in lowered, 15),
-        ("tauic" in lowered and "u0_xy" in lowered, 13),
-        ("tauic" in lowered and "r0_y" in lowered, 12),
-        ("visco_t" in lowered and "tauic" in lowered, 15),
-    )
-    for condition, rank in specific:
-        if condition:
-            return rank
-    groups = (
-        ("r0_x", "r0_y", "u0_x**2"),       # inertia
-        ("w0*r0",),                          # advection
-        ("zj0_s", "zj0_t"),                 # magnetic bracket
-        ("visco_fact_old",),
-        ("visco_fact_new", "w0"),
-        ("u0_xpp", "u0_ypp"),
-        ("zj0_p",),
-        ("v_s", "T0", "r0_t"),             # pressure
-        ("visco_num_T",),
-        ("tgnum_u", "r0*w0"),
-        ("fact_conservative_u*tgnum_u",),
-        ("tauIC", "w0_s"),                  # diamagnetic
-        ("tauIC", "Pi0_y"),
-        ("Pi0_xx", "Pi0_yy"),
-        ("dvisco_dT", "W_dia"),
-        ("W_dia", "visco_T"),
-        ("delta_u",),
-        ("Sion_T", "Srec_T"),
-        ("particle_source", "source_"),
-        ("fact_conservative_u",),
-        ("aux_P_", "aux_divP"),
-    )
-    for index, needles in enumerate(groups):
-        if all(needle.lower() in lowered for needle in needles):
-            return index
-    for index, needles in enumerate(groups):
-        if any(needle.lower() in lowered for needle in needles):
-            return index
-    return len(groups)
 
 
 def _expanded_ordered_monomials(text, *, temperature_model=None):
@@ -1087,107 +1014,10 @@ def _source_slots(assignments, generated, *, temperature_model=None,
             set(by_lhs), generated, temperature_model,
         ))
         return slots
-    # Parsing generated text is expensive, especially for the expanded u
-    # tangent.  Build the canonical lookup once instead of once per source
-    # term.
-    canonical = {
-        lhs: [_canonical_candidates(text) for text in terms]
-        for lhs, terms in generated.items()
-    }
-    expanded = {
-        lhs: [_expanded_candidates(text) for text in terms]
-        for lhs, terms in generated.items()
-    }
-    for assignment in assignments:
-        if assignment.lhs == "rhs_ij(var_u)":
-            # The weak momentum RHS is intentionally kept factored.  Align its
-            # outer Fortran terms positionally; expanding them into monomials
-            # creates hundreds of artificial generated-only slots.
-            source_pieces = _split_top_level(assignment.expression)
-            all_generated_terms = generated.get(assignment.lhs, ())
-            start = positional_consumed[assignment.lhs]
-            generated_terms = sorted(
-                all_generated_terms[start:], key=_u_rhs_order_key
-            )
-            positional_consumed[assignment.lhs] += len(generated_terms)
-            generated_index = 0
-            for source in source_pieces:
-                take = 2 if "delta_u_x" in source and "delta_u_y" in source else 1
-                selected = generated_terms[generated_index:generated_index + take]
-                generated_index += take
-                generated_term = " + ".join(selected)
-                slots.append((assignment, source, generated_term))
-            used[assignment.lhs].update(
-                range(start, start + len(generated_terms))
-            )
-            continue
-        for source_piece in _split_top_level(assignment.expression):
-            variants = _parsed_terms(source_piece)
-            if not variants:
-                slots.append((assignment, source_piece, ""))
-                continue
-            # Keep one visual slot for each outer Fortran term.  A source term
-            # such as ``eta*(zj0-current_source-Jb)`` expands into multiple
-            # SymPy monomials; all matching generated monomials are folded back
-            # into this one source-ordered slot.
-            # The generic psi/rho blocks in model-600 use the two-temperature
-            # ``Pe0`` convention, while the explicit ``var_T`` block uses the
-            # single-temperature branch.  Select the matching source alias
-            # expansion before ordering its monomials.
-            use_two_temperature = (
-                assignment.lhs in {
-                    "amat(var_psi,var_psi)",
-                    "amat(var_psi,var_rho)",
-                    "amat_n(var_psi,var_rho)",
-                }
-                or "var_te" in assignment.lhs
-            )
-            if use_two_temperature:
-                # Explicit Te0 terms are already in the desired branch; only
-                # the abstract Pe0 aliases need the final two-temperature
-                # expansion.
-                variant_index = (
-                    0 if "te0" in source_piece.lower() else len(variants) - 1
-                )
-            else:
-                variant_index = 0
-            source_terms_raw = variants[variant_index]
-            common_symbols = set.intersection(
-                *(set(term.free_symbols) for term in source_terms_raw)
-            ) if source_terms_raw else set()
-            source_terms = sorted(
-                source_terms_raw,
-                key=lambda term: _source_term_order(
-                    source_piece, term, common_symbols
-                ),
-            )
-            matched_terms = []
-            for source_term in source_terms:
-                matched = None
-                for index, generated_text in enumerate(generated.get(assignment.lhs, ())):
-                    if index in used[assignment.lhs]:
-                        continue
-                    if source_term in canonical[assignment.lhs][index]:
-                        used[assignment.lhs].add(index)
-                        matched = generated_text
-                        break
-                if matched is not None:
-                    matched_terms.append(matched)
-            slots.append((assignment, source_piece, " + ".join(matched_terms)))
-    # Generated-only terms follow the source slots in their assignment block.
-    for lhs, terms in generated.items():
-        if lhs == "rhs_ij(var_u)":
-            # Focused u-RHS reports are source-slot aligned; do not append
-            # SymPy-expanded leftovers as thousands of artificial lines.
-            continue
-        row_match = re.search(r"\(var_(psi|u|zj|w|rho|rhoimp|vpar|ti|te|t)\b", lhs)
-        if row_match is None:
-            continue
-        synthetic = SourceAssignment(lhs, row_match.group(1), 0, "")
-        for index, term in enumerate(terms):
-            if index not in used[lhs]:
-                slots.append((synthetic, "", term))
-    return slots
+    # ``assignments`` is empty only when the requested row has no source
+    # assignment in this temperature branch; the generator produces nothing
+    # for it either, so there is nothing to align.
+    return []
 
 
 def _render_report(
@@ -1233,7 +1063,7 @@ def _render_report(
 
 
 def export_model600_markdown(
-    source_path, source_output, generated_output, equations=None, assignments=None,
+    source_path, source_output, generated_output, equations=None,
     include_neo=False,
 ):
     """Write aligned source/generated reports and return their paths.
@@ -1249,8 +1079,6 @@ def export_model600_markdown(
     invalid = set(rows) - set(ROWS)
     if invalid:
         raise ValueError("Unknown model-600 equation(s): {}".format(", ".join(sorted(invalid))))
-    assignment_filter = assignments
-    requested = {_clean_lhs(name) for name in assignment_filter} if assignment_filter else None
     all_assignments = _read_source_assignments(source_path)
     source_sections = []
     generated_sections = []
@@ -1262,7 +1090,7 @@ def export_model600_markdown(
             and (include_neo or "amu_neo_prof" not in assignment.expression)
         ]
         generated = _generated_pools(
-            rows, requested_lhs=requested, include_neo=include_neo,
+            rows, include_neo=include_neo,
             with_tite=with_tite,
         )
         generated_alternative = {}
@@ -1274,23 +1102,11 @@ def export_model600_markdown(
                 row for row in ("vpar", "ti", "te", "t") if row in rows
             )
             alternative_pools = _generated_pools(
-                alternative_rows, requested_lhs=requested,
+                alternative_rows,
                 include_neo=include_neo, with_tite=with_tite,
                 element_brackets=False,
             )
             generated_alternative = dict(alternative_pools)
-        if assignment_filter is not None:
-            source_assignments = [
-                assignment for assignment in source_assignments
-                if assignment.lhs in requested
-            ]
-            generated = {
-                lhs: terms for lhs, terms in generated.items() if lhs in requested
-            }
-            generated_alternative = {
-                lhs: terms for lhs, terms in generated_alternative.items()
-                if lhs in requested
-            }
         slots = _source_slots(
             source_assignments, generated, temperature_model=temperature_model,
             generated_alternative=generated_alternative,

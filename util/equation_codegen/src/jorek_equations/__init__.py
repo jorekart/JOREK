@@ -46,7 +46,7 @@ from .symbols import (
     test_function,
     trial,
 )
-from .source_compare import FortranComparisonError
+from .fortran_source import FortranComparisonError
 
 __all__ = [
     "ConstraintEquation",

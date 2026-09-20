@@ -1,4 +1,4 @@
-"""Checks for the report comparison helpers."""
+"""Report generation: term alignment, coordinate spellings, rendering."""
 
 import sys
 import unittest
@@ -13,7 +13,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "examples"))
 from diff_model600_reports import to_element_basis, to_physical  # noqa: E402
 from jorek_equations.model600_markdown import (  # noqa: E402
     SourceAssignment,
+    _canonical_display,
+    _render_report,
     _source_monomial_slots,
+    _split_top_level,
 )
 
 
@@ -62,9 +65,6 @@ def assignment_list(assignment):
     return [assignment]
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class MatchingOrderTest(unittest.TestCase):
     """Exact matches must be resolved before the relaxed ones."""
@@ -82,3 +82,34 @@ class MatchingOrderTest(unittest.TestCase):
         self.assertIn(("a*b", "a*b"), rendered)
         self.assertIn(("2*a*b", "3*a*b"), rendered)
         self.assertTrue(all(source and generated for source, generated in rendered))
+
+
+
+class RenderTest(unittest.TestCase):
+    """Report rendering keeps one physical line per aligned term."""
+
+    def test_top_level_split_keeps_parenthesized_sum_together(self):
+        self.assertEqual(
+            _split_top_level("a + b*(c-d) - e"),
+            ["a", "+ b*(c-d)", "- e"],
+        )
+
+    def test_missing_generated_term_is_an_empty_aligned_line(self):
+        assignment = SourceAssignment("rhs_ij(var_psi)", "psi", 1, "a")
+        slots = [(assignment, "a", "")]
+        source = _render_report(slots, "source").splitlines()
+        generated = _render_report(slots, "generated").splitlines()
+        self.assertEqual(len(source), len(generated))
+        self.assertIn("a", source)
+        self.assertEqual(generated[source.index("a")], "")
+
+
+    def test_factor_order_is_shared_between_source_and_generated_forms(self):
+        self.assertEqual(
+            _canonical_display("F0 / BigR * v * u_p * xjac * theta * tstep"),
+            _canonical_display("F0*theta*tstep*xjac*u_p*v/BigR"),
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

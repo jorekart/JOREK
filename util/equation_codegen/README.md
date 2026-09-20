@@ -1,18 +1,32 @@
 # JOREK equation code generator
 
-This package implements the symbolic DSL described in
-[`SPECIFICATION.md`](SPECIFICATION.md). The initial version provides fields,
-test functions, structured spatial derivatives, external-function dependency
-policies, directional linearization, and the JOREK RHS/AMAT sign convention.
+This package checks the hand-written linearization in a JOREK element routine
+against one derived symbolically from the same weak form. It does four things:
 
-Model-199 equations, FFT-channel classification, and Fortran emission will be
-added after the symbolic core has been validated.
+1. **Read** the assembled `rhs_ij`/`amat` terms out of a model's
+   `mod_elt_matrix_fft.f90`.
+2. **Generate** the residual and the Jacobian blocks from the weak form, by
+   directional differentiation of the equations written in the DSL.
+3. **Compare** the two, monomial by monomial.
+4. **Report** the comparison, so that a mismatch is readable rather than a
+   wall of algebra.
 
-Equation definitions use bare fields (`psi`, `u`, `rho`, ...). The
-linearization stage decides when those fields become current/background values
-and when the selected field becomes a trial function or increment. Explicit
-forms such as `psi.current` remain available for low-level expressions and
-tests.
+The symbolic layer is described in [`SPECIFICATION.md`](SPECIFICATION.md).
+Equations are written with bare fields (`psi`, `u`, `rho`, ...); the
+linearization stage decides when those become background values and when the
+differentiated one becomes a trial function.
+
+## Layout
+
+| Path | Role |
+|---|---|
+| `src/jorek_equations/symbols.py`, `operators.py`, `external.py` | fields, roles, spatial operators, externally supplied quantities |
+| `src/jorek_equations/equations.py`, `linearization.py`, `channels.py` | weak equations, the Gateaux derivative, the FFT channel split |
+| `src/jorek_equations/fortran.py` | printing a symbolic term with JOREK's names |
+| `src/jorek_equations/fortran_source.py` | step 1 and step 3: read the element routine, normalize its work variables, compare |
+| `src/jorek_equations/model199.py`, `model600.py` | the equations themselves |
+| `src/jorek_equations/model600_markdown.py` | step 4: the aligned Markdown reports |
+| `final_test.py`, `reference/` | the regression benchmark |
 
 ## Setup and tests
 
@@ -22,65 +36,34 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-To print the current symbolic and JOREK-Fortran-style model-199 equation-1
-linearization:
+## Model 199
 
 ```bash
-.venv/bin/python examples/print_model199_equation1.py
-```
-
-To compare generated equation-1 terms with the current model-199 Fortran
-source:
-
-```bash
-.venv/bin/python examples/compare_model199_equation1.py
+.venv/bin/python examples/check_model199.py
 ```
 
 The comparison is symbolic rather than textual. A mismatch raises an error
-that includes the source expression, generated expression, and their
+that includes the source expression, the generated expression, and their
 algebraic difference.
 
 ## Model 600 reports
 
-The integrated model-600 checker validates the currently implemented `psi`,
-`u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`, `Ti`, `Te` and `T` rows and writes
-two line-aligned Markdown reports:
-
-```bash
-.venv/bin/python examples/check_model600_integrated.py
-meld reports/model600_fortran_terms.md reports/model600_generated_terms.md
-```
-
-The integrated script accepts the same selector, for example
-`--equation psi`; with no selector it exports all ten rows.
-
-To generate only the reports, without running the pass/fail checks:
+`export_model600_terms.py` writes the two line-aligned Markdown reports for
+the `psi`, `u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`, `Ti`, `Te` and `T` rows:
 
 ```bash
 .venv/bin/python examples/export_model600_terms.py
+meld reports/model600_fortran_terms.md reports/model600_generated_terms.md
 ```
 
-For a faster report while developing one row, select it explicitly:
+Repeat `--equation` to export fewer rows while developing one of them:
 
 ```bash
 .venv/bin/python examples/export_model600_terms.py --equation psi
 ```
 
-To inspect only the factored perpendicular-momentum RHS:
-
-```bash
-.venv/bin/python examples/export_model600_terms.py \
-  --equation u --assignment 'rhs_ij(var_u)'
-```
-
-This focused mode preserves the Fortran outer-term structure and does not
-build the expensive `u` AMAT columns.
-
-The available selections are `psi`, `u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`,
-`Ti`, `Te` and `T`. Repeat `--equation` to select more than one row. If no
-selection is supplied, all ten rows are exported. `Ti` and `Te` exist only in
-the two-temperature branch of the element routine and `T` only in the other
-one, so each is exported into its own section.
+`Ti` and `Te` exist only in the two-temperature branch of the element routine
+and `T` only in the other one, so each is exported into its own section.
 
 To compare the two reports block by block instead of line by line:
 
@@ -137,8 +120,9 @@ lists are the complete statement of the disagreement: everything else in the
 reports is identical on both sides.
 
 ```bash
-./final_test.py             # recompute and compare; exit 0 on a match
-./final_test.py --update    # rewrite the reference after an intended change
+./final_test.py                    # recompute and compare; exit 0 on a match
+./final_test.py --equation vpar    # only these rows, for a quick check
+./final_test.py --update           # rewrite the reference after an intended change
 ```
 
 The benchmark exports the reports into a temporary directory, so it never
@@ -158,7 +142,7 @@ reference, which usually explains the rest of the output.
 
 ## Known JOREK differences
 
-With the conventions above, all nine rows — `psi`, `u`, `zj`, `w`, `rho`,
+With the conventions above, all ten rows — `psi`, `u`, `zj`, `w`, `rho`,
 `vpar`, `rhoimp`, `Ti`, `Te` and `T` — are reproduced by the generator, and
 174 of the 233 exported assignment blocks are identical. The remaining 59 are
 terms the generator produces and the element

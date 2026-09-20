@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PROJECT_ROOT.parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from jorek_equations.source_compare import (  # noqa: E402
+from jorek_equations.fortran_source import (  # noqa: E402
     EQUATION_1_ASSIGNMENTS,
     EQUATION_2_ASSIGNMENTS,
     EQUATION_3_ASSIGNMENTS,
