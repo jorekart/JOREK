@@ -394,44 +394,39 @@ def _B_dot_grad(value, flux=psi, *, st_form=False):
 
     return (F0 / R * dphi(value) + poiss_bracket(value, flux)) / R
 
-def _perpendicular_diffusion(test, value):
-    """Weak perpendicular diffusion operator, including its toroidal part."""
+def _diffusion_tot_intg_by_parts(test, value):
+    """Total diffusion operator, including its toroidal part, integrated by parts."""
 
     return dot(grad(test), grad(value)) + dphi(test) * dphi(value) / R**2
 
-def _species_advection(v, density, *, bracket=poiss_bracket_st):
-    """Advection and compression of a particle density."""
+def _u_convection(density, *, bracket=poiss_bracket_st):
+    """Advection and compression of a particle density by u flow."""
 
     return (
-        v * R**2 * bracket(density, u)
-        + v * 2 * R * density * dZ(u) * xjac
+        + R * bracket(density, u) / xjac
+        + 2 * density * dZ(u) 
     )
 
-def _parallel_convection(v, density):
-    """Convection of a particle density along the field by ``vpar``."""
+def _parallel_convection(quantity, vpar=vpar):
+    """Convection of a quantity density along the field by ``vpar``."""
 
     return (
-        - v * vpar    * _B_dot_grad(density, st_form=True) * R * xjac
-        - v * density * _B_dot_grad(vpar,    st_form=True) * R * xjac
+        - vpar     * _B_dot_grad(quantity, st_form=True)
+        - quantity * _B_dot_grad(vpar,    st_form=True) 
     )
 
-def _species_tgnum(v, density, factor):
+def _dens_tgnum_intg_by_parts(v, density):
     """Taylor-Galerkin stabilization of a particle-density equation."""
 
     return (
-        -factor * sp.Rational(1, 4) * R**3
-        * poiss_bracket(density, u) * poiss_bracket(v, u) * xjac * tstep
-        - factor * sp.Rational(1, 4) * R * vpar**2
-        * _B_dot_grad(density) * _B_dot_grad(v) * xjac * tstep
+        -sp.Rational(1, 4) * R**2 * poiss_bracket(density, u) * poiss_bracket(v, u) * tstep
+        -sp.Rational(1, 4) * vpar**2 * _B_dot_grad(density) * _B_dot_grad(v) * tstep
     )
 
-def _parallel_diffusion(v, density, excess):
-    """Anisotropic diffusion of a particle density along the field."""
+def _par_diff_intg_by_parts(v, density):
+    """Parallel diffusion term along the field integrated by parts."""
 
-    return (
-        -excess * R / _B2(psi)
-        * _B_dot_grad(v) * _B_dot_grad(density) * xjac
-    )
+    return - _B_dot_grad(v) * _B_dot_grad(density) / _B2(psi) 
 
 def _diamagnetic_pressure(*, with_TiTe=False):
     """Ion pressure ``Pi = (rho + alpha_i*rhoimp)*Ti`` of ``construct_pressure``.
@@ -454,15 +449,16 @@ def _diamagnetic_viscosity(*, with_TiTe=False):
     return W_dia_two(rho, Ti) if with_TiTe else W_dia_single(rho, T)
 
 
-def _pressure_transport(v, pressure, *, bracket):
-    """Advection, compression and parallel convection of a pressure."""
+def _press_convec_comp(pressure, *, bracket):
+    """convection and compression of pressure due to u and vpar terms."""
 
     return (
-        v * R**2 * bracket(pressure, u)
-        + 2 * GAMMA * v * R * pressure * dZ(u) * xjac
-        - v * F0 / R * vpar * dphi(pressure) * xjac
-        - v * vpar * poiss_bracket_st(pressure, psi)
-        - GAMMA * v * pressure * R * xjac * _B_dot_grad(vpar, st_form=True)
+        # flow convection
+        + R**2 * bracket(pressure, u) / (xjac * R)
+        - vpar * _B_dot_grad(pressure, st_form=True)
+        # flow compression
+        + 2 * GAMMA * pressure * dZ(u)   
+        - GAMMA * pressure * _B_dot_grad(vpar, st_form=True) 
     )
 
 
@@ -472,7 +468,7 @@ def _heat_conduction(v, temperature, parallel, perpendicular, numerical):
     return (
         -(parallel - perpendicular) * R / _B2(psi)
         * _B_dot_grad(v) * _B_dot_grad(temperature) * xjac
-        - perpendicular * R * _perpendicular_diffusion(v, temperature) * xjac
+        - perpendicular * R * _diffusion_tot_intg_by_parts(v, temperature) * xjac
         - numerical * laplacian(v) * laplacian(temperature) * R * xjac
     )
 
@@ -575,8 +571,8 @@ def _ionization_energy_transport(v, energy, temperature):
     pressure advection right above it uses physical ones.
     """
 
-    d_par_excess = D_par_local + D_par_sc_num * tau_sc - D_prof
-    d_par_excess_imp = D_par_local_imp + D_par_imp_sc_num * tau_sc - D_prof_imp
+    d_par_tot = D_par_local + D_par_sc_num * tau_sc - D_prof
+    d_par_imp_tot = D_par_local_imp + D_par_imp_sc_num * tau_sc - D_prof_imp
     bb2 = _B2(psi)
     return (GAMMA - 1) * (
         v * R**2 * poiss_bracket_st(energy, u)
@@ -584,14 +580,14 @@ def _ionization_energy_transport(v, energy, temperature):
         - v * F0 / R * vpar * dphi(energy) * xjac
         - v * vpar * poiss_bracket_st(energy, psi)
         - v * energy * R * xjac * _B_dot_grad(vpar, st_form=True)
-        - E_ion_state(temperature) * d_par_excess_imp * R / bb2
+        - E_ion_state(temperature) * d_par_imp_tot * R / bb2
         * _B_dot_grad(v) * _B_dot_grad(rhoimp) * xjac
         - E_ion_state(temperature) * D_prof_imp * R
-        * _perpendicular_diffusion(v, rhoimp) * xjac
-        - E_ion_bg_state() * d_par_excess * R / bb2
+        * _diffusion_tot_intg_by_parts(v, rhoimp) * xjac
+        - E_ion_bg_state() * d_par_tot * R / bb2
         * _B_dot_grad(v) * _B_dot_grad(rho - rhoimp) * xjac
         - E_ion_bg_state() * D_prof * R
-        * _perpendicular_diffusion(v, rho - rhoimp) * xjac
+        * _diffusion_tot_intg_by_parts(v, rho - rhoimp) * xjac
     )
 
 
@@ -609,25 +605,26 @@ def induction_equation_1(
 
     v = test_function("v")
     T_or_Te = Te if with_TiTe else T
+    dV = R * xjac
 
     # Time derivative
-    A = v * psi / R * xjac    
+    A = v * psi / R**2 * dV   
 
     # RHS
     B = (
         # -B.grad u
-        + v * poiss_bracket_st(psi, u) - v * F0 / R * dphi(u) * xjac
+        + v * poiss_bracket_st(psi, u) / (R * xjac) - v * F0 / R**2 * dphi(u)
 
         # eta*j
-        + v * eta(T_or_Te, rho, rhoimp)*(j - coefficient("current_source") - Jb) / R * xjac
+        + v * eta(T_or_Te, rho, rhoimp)*(j - coefficient("current_source") - Jb) / R**2
 
         # hyper-resistivity
-        + eta_num_T(T_or_Te) * dot(grad(v), grad(j)) * xjac
+        + eta_num_T(T_or_Te) * dot(grad(v), grad(j)) / R
     )
 
     if include_runaway_coupling:
         # -eta*j_RE
-        B += -v * eta(T_or_Te, rho, rhoimp) * aux_jre_ind / R * xjac
+        B += -v * eta(T_or_Te, rho, rhoimp) * aux_jre_ind / R**2
 
     if include_diamag:
         # In model600 ``r0_corr`` is the corrected density > 0, to avoid
@@ -644,9 +641,11 @@ def induction_equation_1(
 
         # B.grad Pe diamagnetic term
         B += 2*(
-            - v * tauIC / (rho_corr * _B2(psi)) * F0**2 / R**2 * poiss_bracket_st(psi, Pe)
-            + v * tauIC / (rho_corr * _B2(psi)) * F0**3 / R**3 * dphi(Pe) * xjac
+            - v * tauIC / (rho_corr * _B2(psi)) * F0**2 / R**3 * poiss_bracket_st(psi, Pe) / xjac
+            + v * tauIC / (rho_corr * _B2(psi)) * F0**3 / R**4 * dphi(Pe) 
         )
+
+    B = B * dV
 
     return EvolutionEquation("model600_induction", v, A, B)
 
@@ -868,41 +867,43 @@ def density_equation_rho(*, with_TiTe=False):
 
     v = test_function("v")
     T_or_Te = Te if with_TiTe else T
-    electron_density = rho + alpha_e_state(T_or_Te) * rhoimp
+    rho_main = rho - rhoimp
+    ne = rho + alpha_e_state(T_or_Te) * rhoimp
     # The parallel diffusivity in excess of the perpendicular one; the element
     # routine writes the same grouping for the impurity species.
-    d_par_excess = D_par_local + D_par_sc_num * tau_sc - D_prof
-    d_par_excess_imp = D_par_local_imp + D_par_imp_sc_num * tau_sc - D_prof_imp
+    D_par_tot = D_par_local + D_par_sc_num * tau_sc 
+    D_par_imp_tot = D_par_local_imp + D_par_imp_sc_num * tau_sc 
     psi_gradient = grad(psi)
+    dV = R * xjac
 
+    # Time derivative
+    A = v * rho * dV
+
+    # Other terms and RHS
     B = (
-        v * R * (
-            particle_source + source_pellet + source_bg_drift + source_imp_drift
-        ) * xjac
-        + _species_advection(v, rho)
-        + _parallel_convection(v, rho)
-        + _species_tgnum(v, rho, tgnum_rho)
+        + v * (particle_source+source_pellet+source_bg_drift+source_imp_drift) 
+        + v * _u_convection(rho) 
+        + v * _parallel_convection(rho)  
+        + tgnum_rho * _dens_tgnum_intg_by_parts(v, rho) 
         # The main species diffuses with the excess of the bulk diffusivity and
         # the impurity one with its own.
-        + _parallel_diffusion(v, rho - rhoimp, d_par_excess)
-        + _parallel_diffusion(v, rhoimp, d_par_excess_imp)
-        - D_prof * R * _perpendicular_diffusion(v, rho - rhoimp) * xjac
-        - D_prof_imp * R * _perpendicular_diffusion(v, rhoimp) * xjac
-        - D_perp_num_psin * laplacian(v) * laplacian(rho) * R * xjac
+        + (D_par_tot-D_prof)         * _par_diff_intg_by_parts(v, rho_main) 
+        + (D_par_imp_tot-D_prof_imp) * _par_diff_intg_by_parts(v, rhoimp)   
+        - D_prof  * _diffusion_tot_intg_by_parts(v, rho_main) 
+        - D_prof_imp *     _diffusion_tot_intg_by_parts(v, rhoimp)
+        - D_perp_num_psin * laplacian(v) * laplacian(rho) 
         # Diamagnetic drift, atomic sources and the kinetic coupling.
         + v * 2 * tauIC * 2 * dZ(_diamagnetic_pressure(with_TiTe=with_TiTe))
-        * R * xjac
-        + v * electron_density * rhon * R * Sion_rate(T_or_Te) * xjac
-        - v * electron_density * (rho - rhoimp) * R * Srec_rate(T_or_Te) * xjac
-        + v * R * aux_rho0 * xjac
+        + v * ne * rhon * Sion_rate(T_or_Te) 
+        - v * ne * rho_main * Srec_rate(T_or_Te) 
+        + v * aux_rho0 
         # Weak form of -div(rho*V_pinch) with
         # V_pinch = -V_prof_pinch*grad(psi)/|grad(psi)|.  The pinch direction
         # is built from the evolved flux, so it is varied like any other state
         # quantity; the element routine freezes it (see JOREK_FINDINGS.md).
         - V_prof_pinch / sp.sqrt(psi_gradient[0]**2 + psi_gradient[1]**2)
-        * dot(grad(v), psi_gradient) * rho * R * xjac
-    )
-    A = v * rho * R * xjac
+        * dot(grad(v), psi_gradient) * rho 
+    ) * dV
     return EvolutionEquation("model600_density", v, A, B)
 
 def parallel_velocity_equation_vpar(*, with_TiTe=False, st_form=True):
@@ -922,15 +923,15 @@ def parallel_velocity_equation_vpar(*, with_TiTe=False, st_form=True):
     v = test_function("v")
     T_or_Te = Te if with_TiTe else T
     bb2 = _B2(psi)
+    dV = R * xjac
+    bb2_dV = bb2 * dV
     pressure = rho * (Ti + Te) if with_TiTe else rho * T
     if with_TiTe:
         pressure += rhoimp * (alpha_i_state() * Ti + alpha_e_temperature(Te))
     else:
         pressure += rhoimp * alpha_imp_temperature(T)
     electron_density = rho + alpha_e_state(T_or_Te) * rhoimp
-    kinetic_gradient = functools.partial(
-        _B_dot_grad, st_form=st_form
-    )
+    kinetic_gradient = functools.partial(_B_dot_grad, st_form=st_form)
     # Only the flux is varied in the prescribed rotation profile, so
     # ``grad(Vt) = dV_dpsi_source*grad(psi)`` is the faithful form.
     rotation_shear = tuple(
@@ -940,55 +941,56 @@ def parallel_velocity_equation_vpar(*, with_TiTe=False, st_form=True):
     visco_par_eff = visco_par + visco_par_sc_num * tau_sc
     rho_hat = _rho_hat()
     psi_gradient = grad(psi)
+    # Momentum a mass source/sink carries into or out of the parallel
+    # velocity residual, per unit source-rate density.
+    source_momentum = vpar * bb2_dV
 
     B = (
         # Parallel pressure gradient.
-        -v * R * _B_dot_grad(pressure, st_form=True) * xjac
+        - v * _B_dot_grad(pressure, st_form=True) * dV
         # Parallel advection of the kinetic energy, 0.5*v_par**2*B**2.
-        + sp.Rational(1, 2) * vpar**2 * bb2 * R * xjac
+        + sp.Rational(1, 2) * vpar**2 * bb2_dV
         * (rho * kinetic_gradient(v) + v * kinetic_gradient(rho))
         # Numerical and physical parallel viscosities.
-        - visco_par_num * laplacian(v) * laplacian(vpar) * R * xjac
+        - visco_par_num * laplacian(v) * laplacian(vpar) * dV
         - visco_par_par * F0**2 / (R * bb2)
         * _B_dot_grad(vpar) * _B_dot_grad(v) * xjac
-        - visco_par_eff * dot(grad(v), rotation_shear) * R * xjac
+        - visco_par_eff * dot(grad(v), rotation_shear) * dV
         # Momentum carried by the particle sources; the conservative form
         # moves part of it into A.
         - v * (
             particle_source + source_pellet + source_bg_drift
             + source_imp_drift
-        ) * vpar * bb2 * R * xjac * (1 - fact_conservative_u)
+        ) * source_momentum * (1 - fact_conservative_u)
         # -(d_t rho + div(rho v)) v_par B**2 R; the d_t rho part belongs to A.
         + fact_conservative_u * v * vpar * bb2 * xjac * (
             poiss_bracket(rho_hat, u) - R * _B_dot_grad(rho * vpar)
         )
-        + (1 - delta_n_convection) * (
-            -v * electron_density * rhon * Sion_rate(T_or_Te)
-            * vpar * bb2 * R * xjac
+        + (1 - delta_n_convection) * source_momentum * (
+            - v * electron_density * rhon * Sion_rate(T_or_Te)
             + v * electron_density * (rho - rhoimp) * Srec_rate(T_or_Te)
-            * vpar * bb2 * R * xjac
         )
         # Taylor-Galerkin stabilization.
-        - tgnum_vpar * sp.Rational(1, 4) * rho * vpar**2 * bb2 * R
-        * _B_dot_grad(vpar, st_form=True) * _B_dot_grad(v, st_form=True) * xjac * tstep
-        - tgnum_vpar * sp.Rational(1, 4) * v * vpar**2 * bb2 * R
+        - tgnum_vpar * sp.Rational(1, 4) * rho * vpar**2 * bb2_dV
+        * _B_dot_grad(vpar, st_form=True) * _B_dot_grad(v, st_form=True) * tstep
+        - tgnum_vpar * sp.Rational(1, 4) * v * vpar**2 * bb2_dV
         * (1 - fact_conservative_u)
-        * _B_dot_grad(vpar, st_form=True) * _B_dot_grad(rho, st_form=True) * xjac * tstep
-        - tgnum_vpar * sp.Rational(1, 4) * vpar**3 * bb2 * R
+        * _B_dot_grad(vpar, st_form=True) * _B_dot_grad(rho, st_form=True) * tstep
+        - tgnum_vpar * sp.Rational(1, 4) * vpar**3 * bb2_dV
         * fact_conservative_u
-        * _B_dot_grad(rho, st_form=True) * _B_dot_grad(v, st_form=True) * xjac * tstep
+        * _B_dot_grad(rho, st_form=True) * _B_dot_grad(v, st_form=True) * tstep
         # Kinetic coupling and the inward pinch.
-        - v * aux_rho0 * vpar * bb2 * R * (1 - fact_conservative_u) * xjac
-        + v * R * aux_mom_par0 * xjac
+        - v * aux_rho0 * source_momentum * (1 - fact_conservative_u)
+        + v * aux_mom_par0 * dV
         + V_prof_pinch / sp.sqrt(psi_gradient[0]**2 + psi_gradient[1]**2)
-        * dot(psi_gradient, grad(vpar)) * rho * v * R * xjac
+        * dot(psi_gradient, grad(vpar)) * rho * v * dV
     )
     # The parallel momentum density is rho*v_par*B**2*R.  The element routine
     # freezes the density correction in the tangent, as in the perpendicular
     # momentum equation.
-    A = (
-        v * corr_neg_dens(freeze(rho)) * vpar * bb2 * R * xjac
-        + fact_conservative_u * v * rho * freeze(vpar) * bb2 * R * xjac
+    A = bb2_dV * (
+        v * corr_neg_dens(freeze(rho)) * vpar
+        + fact_conservative_u * v * rho * freeze(vpar)
     )
     return EvolutionEquation("model600_parallel_velocity", v, A, B)
 
@@ -1001,18 +1003,23 @@ def impurity_density_equation_rhoimp(*, with_TiTe=False):
     """
 
     v = test_function("v")
-    d_par_excess_imp = D_par_local_imp + D_par_imp_sc_num * tau_sc - D_prof_imp
+    D_par_imp_tot = D_par_local_imp + D_par_imp_sc_num * tau_sc
+    dV = R * xjac
 
+    # Time derivative
+    A = v * rhoimp * dV
+
+    # Other terms and RHS
     B = (
-        _species_advection(v, rhoimp)
-        + _parallel_convection(v, rhoimp)
-        + _species_tgnum(v, rhoimp, tgnum_rhoimp)
-        + _parallel_diffusion(v, rhoimp, d_par_excess_imp)
-        - D_prof_imp * R * _perpendicular_diffusion(v, rhoimp) * xjac
-        - Dn_perp_num * laplacian(v) * laplacian(rhoimp) * R * xjac
-        + R * v * source_imp_drift * xjac
-    )
-    A = v * rhoimp * R * xjac
+        + v * _u_convection(rhoimp) 
+        + v * _parallel_convection(rhoimp)
+        + tgnum_rhoimp * _dens_tgnum_intg_by_parts(v, rhoimp)
+        + (D_par_imp_tot-D_prof_imp) * _par_diff_intg_by_parts(v, rhoimp)
+        - D_prof_imp  * _diffusion_tot_intg_by_parts(v, rhoimp)
+        - Dn_perp_num * laplacian(v) * laplacian(rhoimp)
+        + v * source_imp_drift 
+    ) * dV
+    
     return EvolutionEquation("model600_impurity_density", v, A, B)
 
 def ion_energy_equation_Ti(*, st_form=True):
@@ -1030,8 +1037,8 @@ def ion_energy_equation_Ti(*, st_form=True):
     ion_pressure = ion_density * Ti
 
     B = (
-        v * R * heat_source_i * xjac
-        + _pressure_transport(v, ion_pressure, bracket=bracket)
+        + v * R * heat_source_i * xjac
+        + v * _press_convec_comp(ion_pressure, bracket=bracket) * R * xjac
         + _heat_conduction(v, Ti, ZKi_par(Ti), ZKi_perp(rho), ZK_i_perp_num_psin)
         + _energy_tgnum(v, ion_pressure, tgnum_Ti)
         + _friction_heating(v, _released_kinetic_energy(Te))
@@ -1069,8 +1076,8 @@ def electron_energy_equation_Te(*, st_form=True):
     ionization_energy = _ionization_energy(Te)
 
     B = (
-        v * R * heat_source_e * xjac
-        + _pressure_transport(v, electron_pressure, bracket=bracket)
+        + v * R * heat_source_e * xjac
+        + v * _press_convec_comp(electron_pressure, bracket=bracket) * R * xjac
         + _heat_conduction(v, Te, ZKe_par(Te), ZKe_perp(rho), ZK_e_perp_num_psin)
         + _energy_tgnum(v, electron_pressure, tgnum_Te)
         + _ohmic_heating(v, eta_ohm_e(Te, rho, rhoimp))
@@ -1107,8 +1114,8 @@ def total_energy_equation_T(*, st_form=True):
     ionization_energy = _ionization_energy(T)
 
     B = (
-        v * R * heat_source_total * xjac
-        + _pressure_transport(v, pressure, bracket=bracket)
+        + v * R * heat_source_total * xjac
+        + v * _press_convec_comp(pressure, bracket=bracket) * R * xjac
         + _heat_conduction(v, T, ZK_par(T), ZK_perp(rho), ZK_perp_num_psin)
         + _energy_tgnum(v, pressure, tgnum_T)
         + _ohmic_heating(v, eta_ohm_e(T, rho, rhoimp))
