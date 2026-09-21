@@ -907,91 +907,75 @@ def density_equation_rho(*, with_TiTe=False):
     return EvolutionEquation("model600_density", v, A, B)
 
 def parallel_velocity_equation_vpar(*, with_TiTe=False, st_form=True):
-    """Model-600 parallel velocity equation (``var_vpar``).
-
-    The perpendicular parallel viscosity follows the default
-    ``normalized_velocity_profile = .true.`` branch of the element routine.
-
-    ``st_form`` selects how the poloidal bracket of the parallel
-    kinetic-energy flux is spelled.  The element routine writes this one group
-    in element coordinates in the residual and in the ``rho`` and ``vpar``
-    columns, and in physical coordinates in ``amat(var_vpar,var_psi)``.  The
-    pressure gradient and the Taylor-Galerkin terms use element coordinates
-    throughout and need no such switch.
-    """
+    """Model-600 parallel velocity equation (``var_vpar``)."""
 
     v = test_function("v")
     T_or_Te = Te if with_TiTe else T
     bb2 = _B2(psi)
     dV = R * xjac
-    bb2_dV = bb2 * dV
+    rho_hat = _rho_hat()
+    psi_gradient = grad(psi)
+    ne = rho + alpha_e_state(T_or_Te) * rhoimp
     pressure = rho * (Ti + Te) if with_TiTe else rho * T
     if with_TiTe:
         pressure += rhoimp * (alpha_i_state() * Ti + alpha_e_temperature(Te))
     else:
         pressure += rhoimp * alpha_imp_temperature(T)
-    electron_density = rho + alpha_e_state(T_or_Te) * rhoimp
-    kinetic_gradient = functools.partial(_B_dot_grad, st_form=st_form)
+
+    visco_par_eff = visco_par + visco_par_sc_num * tau_sc
+    source_dens_tot = particle_source + source_pellet + source_bg_drift + source_imp_drift
+
+    Bdot_grad = functools.partial(_B_dot_grad, st_form=st_form)
     # Only the flux is varied in the prescribed rotation profile, so
     # ``grad(Vt) = dV_dpsi_source*grad(psi)`` is the faithful form.
     rotation_shear = tuple(
         parallel - dV_dpsi_source * flux
         for parallel, flux in zip(grad(vpar), grad(psi))
     )
-    visco_par_eff = visco_par + visco_par_sc_num * tau_sc
-    rho_hat = _rho_hat()
-    psi_gradient = grad(psi)
-    # Momentum a mass source/sink carries into or out of the parallel
-    # velocity residual, per unit source-rate density.
-    source_momentum = vpar * bb2_dV
 
+    # Time derivative
+    # The parallel momentum density is rho*v_par*B**2. The element routinefreezes the density correction in the tangent..
+    A = v * (
+        corr_neg_dens(freeze(rho)) * vpar * bb2
+        + fact_conservative_u * rho * freeze(vpar) * bb2
+    ) * dV
+
+    # The RHS and others
     B = (
         # Parallel pressure gradient.
-        - v * _B_dot_grad(pressure, st_form=True) * dV
+        - v * _B_dot_grad(pressure, st_form=True) 
+
         # Parallel advection of the kinetic energy, 0.5*v_par**2*B**2.
-        + sp.Rational(1, 2) * vpar**2 * bb2_dV
-        * (rho * kinetic_gradient(v) + v * kinetic_gradient(rho))
+        + sp.Rational(1, 2) * vpar**2 * bb2 * (rho * Bdot_grad(v) + v * Bdot_grad(rho))
+
+        # Term to obtain conservative form of momentum equation
+        + fact_conservative_u * v * vpar * bb2 * (poiss_bracket(rho_hat, u)/R - _B_dot_grad(rho * vpar))
+
         # Numerical and physical parallel viscosities.
-        - visco_par_num * laplacian(v) * laplacian(vpar) * dV
-        - visco_par_par * F0**2 / (R * bb2)
-        * _B_dot_grad(vpar) * _B_dot_grad(v) * xjac
-        - visco_par_eff * dot(grad(v), rotation_shear) * dV
-        # Momentum carried by the particle sources; the conservative form
-        # moves part of it into A.
-        - v * (
-            particle_source + source_pellet + source_bg_drift
-            + source_imp_drift
-        ) * source_momentum * (1 - fact_conservative_u)
-        # -(d_t rho + div(rho v)) v_par B**2 R; the d_t rho part belongs to A.
-        + fact_conservative_u * v * vpar * bb2 * xjac * (
-            poiss_bracket(rho_hat, u) - R * _B_dot_grad(rho * vpar)
-        )
-        + (1 - delta_n_convection) * source_momentum * (
-            - v * electron_density * rhon * Sion_rate(T_or_Te)
-            + v * electron_density * (rho - rhoimp) * Srec_rate(T_or_Te)
-        )
+        - visco_par_num * laplacian(v) * laplacian(vpar) 
+        - visco_par_par * F0**2 / (R**2 * bb2) * _B_dot_grad(vpar) * _B_dot_grad(v)
+        - visco_par_eff * dot(grad(v), rotation_shear)
+
+        # External momentum sources
+        + v * aux_mom_par0 
+
+        # Momentum carried by the particle sources; not active in conservative form
+        - v * source_dens_tot * vpar * bb2 * (1 - fact_conservative_u) 
+        - v * aux_rho0       *  vpar * bb2 * (1 - fact_conservative_u)
+
+        # This one should probably be multiplied by (1 - fact_conservative_u
+        + (1 - delta_n_convection) * v * ne * vpar * bb2 * ((rho - rhoimp) * Srec_rate(T_or_Te) -  rhon * Sion_rate(T_or_Te))
+
         # Taylor-Galerkin stabilization.
-        - tgnum_vpar * sp.Rational(1, 4) * rho * vpar**2 * bb2_dV
-        * _B_dot_grad(vpar, st_form=True) * _B_dot_grad(v, st_form=True) * tstep
-        - tgnum_vpar * sp.Rational(1, 4) * v * vpar**2 * bb2_dV
-        * (1 - fact_conservative_u)
-        * _B_dot_grad(vpar, st_form=True) * _B_dot_grad(rho, st_form=True) * tstep
-        - tgnum_vpar * sp.Rational(1, 4) * vpar**3 * bb2_dV
-        * fact_conservative_u
-        * _B_dot_grad(rho, st_form=True) * _B_dot_grad(v, st_form=True) * tstep
-        # Kinetic coupling and the inward pinch.
-        - v * aux_rho0 * source_momentum * (1 - fact_conservative_u)
-        + v * aux_mom_par0 * dV
-        + V_prof_pinch / sp.sqrt(psi_gradient[0]**2 + psi_gradient[1]**2)
-        * dot(psi_gradient, grad(vpar)) * rho * v * dV
-    )
-    # The parallel momentum density is rho*v_par*B**2*R.  The element routine
-    # freezes the density correction in the tangent, as in the perpendicular
-    # momentum equation.
-    A = bb2_dV * (
-        v * corr_neg_dens(freeze(rho)) * vpar
-        + fact_conservative_u * v * rho * freeze(vpar)
-    )
+        - tgnum_vpar * sp.Rational(1, 4) * rho * vpar**2 * bb2* _B_dot_grad(vpar, st_form=True) * _B_dot_grad(v, st_form=True) * tstep
+        - tgnum_vpar * sp.Rational(1, 4) * v * vpar**2 * bb2 * (1 - fact_conservative_u) * _B_dot_grad(vpar, st_form=True) * _B_dot_grad(rho, st_form=True) * tstep
+        - tgnum_vpar * sp.Rational(1, 4) * vpar**3 * bb2 * fact_conservative_u * _B_dot_grad(rho, st_form=True) * _B_dot_grad(v, st_form=True) * tstep
+
+        # Not sure this pinch term should be here
+        + V_prof_pinch / sp.sqrt(psi_gradient[0]**2 + psi_gradient[1]**2) * dot(psi_gradient, grad(vpar)) * rho * v
+
+    ) * dV
+
     return EvolutionEquation("model600_parallel_velocity", v, A, B)
 
 def impurity_density_equation_rhoimp(*, with_TiTe=False):
