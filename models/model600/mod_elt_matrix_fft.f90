@@ -2645,10 +2645,10 @@ do i=1,n_vertex_max
                               + dvisco_dT * T * 2.d0 * v_x * w0             * BigR**2.d0 * visco_fact_new * xjac * theta * tstep  &
                               + dvisco_dT * T * (v_x*u0_xpp + v_y*u0_ypp)   * BigR       * visco_fact_new * xjac * theta * tstep  &
 
-                              ! --- Contributions of the diamagnetic viscosity 
-                              - dvisco_dT     * bigR * W_dia_Ti * (v_x*Ti0_x + v_y*Ti0_y)  * xjac * theta * tstep  &
-                              - visco_T       * bigR * W_dia_Ti * (v_xx + v_x/bigR + v_yy) * xjac * theta * tstep  &
-                              - dvisco_dT     * bigR * W_dia    * (v_x*T_x  + v_y*T_y )    * xjac * theta * tstep  &
+                              ! --- Contributions of the diamagnetic viscosity  (/2 comes from dTi/dT)
+                              - dvisco_dT     * bigR * W_dia_Ti * (v_x*Ti0_x + v_y*Ti0_y)  / 2.d0 * xjac * theta * tstep  &
+                              - visco_T       * bigR * W_dia_Ti * (v_xx + v_x/bigR + v_yy) / 2.d0 * xjac * theta * tstep  &
+                              - dvisco_dT     * bigR * W_dia    * (v_x*T_x  + v_y*T_y )    / 2.d0 * xjac * theta * tstep  &
 
                               - d2visco_dT2*T * bigR * W_dia    * (v_x*Ti0_x + v_y*Ti0_y)  * xjac * theta * tstep  &
                               - dvisco_dT*T   * bigR * W_dia    * (v_xx + v_x/bigR + v_yy) * xjac * theta * tstep  &
