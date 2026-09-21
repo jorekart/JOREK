@@ -355,6 +355,10 @@ def _B2(flux):
     """Total magnetic field squared (B^2)"""
     return (F0**2 + grad(flux)[0]**2 + grad(flux)[1]**2) / R**2
 
+def _B2_pol(flux):
+    """Poloidal magnetic field squared (Bpol^2)"""
+    return (grad(flux)[0]**2 + grad(flux)[1]**2) / R**2
+
 def _B_dot_grad(value, flux=psi, *, st_form=False):
     """Return B.grad(value). st_form computes the Poiss bracket in st coordinates"""
 
@@ -722,10 +726,11 @@ def parallel_velocity_equation_vpar(*, with_TiTe=False, st_form=True):
     )
 
     # Time derivative
-    # The parallel momentum density is rho*v_par*B**2. The element routinefreezes the density correction in the tangent..
+    # The B \cdot d (rho vpar B)
     A = v * (
-        corr_neg_dens(freeze(rho)) * vpar * bb2
-        + fact_conservative_u * rho * freeze(vpar) * bb2
+        + corr_neg_dens(freeze(rho)) * vpar * _B2(freeze(psi))
+        + corr_neg_dens(freeze(rho)) * freeze(vpar) * _B2_pol(psi) * sp.Rational(1, 2)
+        + fact_conservative_u * rho * freeze(vpar) * _B2(freeze(psi))
     ) * dV
 
     # The RHS and others

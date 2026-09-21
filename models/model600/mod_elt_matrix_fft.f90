@@ -1712,13 +1712,13 @@ do i=1,n_vertex_max
                                  
                                  - visco_par_num * (v_xx + v_x/Bigr + v_yy)*(vpar0_xx + vpar0_x/Bigr + vpar0_yy) * BigR * xjac * tstep * factor(var_vpar,4)  &
                                  
-                                 + zeta * v * delta_g(mp,var_vpar,ms,mt) * r0_corr * F0**2 / BigR                       * xjac         * factor(var_vpar,5)  &
+                                 + zeta * v * delta_g(mp,var_vpar,ms,mt) * r0_corr * BB2 * BigR     * xjac         * factor(var_vpar,5)  &
                                  + zeta * v * r0_corr * vpar0 * (ps0_x * delta_ps_x + ps0_y * delta_ps_y) / BigR        * xjac         * factor(var_vpar,5)  &
 
                                  ! New terms coming from -(\partial_t \rho + \nabla \cdot (\rho \mathbf{v})) \mathbf{v} in RHS of momentum equation
                                  ! (see wiki: https://www.jorek.eu/wiki/doku.php?id=model500_501_555#equations):
                                  + fact_conservative_u * (                                                 &
-                                     + zeta * v * delta_rho_g               * vpar0 * F0**2 / BigR * xjac  &
+                                     + zeta * v * delta_rho_g               * vpar0 * BB2 * BigR * xjac  &
                                      + v * (r0_x_hat * u0_y - r0_y_hat * u0_x)       * vpar0 * BB2 * xjac * tstep  &
                                      - v * F0 / BigR * (r0 * vpar0_p + r0_p * vpar0) * vpar0 * BB2 * xjac * tstep  &
                                      - v * r0 * (vpar0_x * ps0_y - vpar0_y * ps0_x)  * vpar0 * BB2 * xjac * tstep  &
@@ -2981,7 +2981,7 @@ do i=1,n_vertex_max
                        ! New terms coming from -(\partial_t \rho + \nabla \cdot (\rho \mathbf{v})) \mathbf{v} in RHS of momentum equation
                        ! (see wiki: https://www.jorek.eu/wiki/doku.php?id=model500_501_555#equations):
                               + fact_conservative_u * ( & 
-                                  + v * rho * vpar0 * F0**2 / BigR * xjac * (1.d0 + zeta)  &
+                                  + v * rho * vpar0 * BB2 * BigR * xjac * (1.d0 + zeta)  &
                                   - v * (rho_x_hat * u0_y - rho_y_hat * u0_x)       * vpar0 * BB2 * theta * xjac * tstep &   
                                   + v * F0 / BigR * rho * vpar0_p                   * vpar0 * BB2 * theta * xjac * tstep &
                                   + v * rho * (vpar0_x * ps0_y - vpar0_y * ps0_x)   * vpar0 * BB2 * theta * xjac * tstep &
@@ -3087,7 +3087,7 @@ do i=1,n_vertex_max
                     end if ! (with_TiTe) ***********************************************************
 
  
-                    amat(var_vpar,var_vpar) = v * Vpar * r0_corr * F0**2 / BigR * xjac * (1.d0 + zeta) &
+                    amat(var_vpar,var_vpar) = v * Vpar * r0_corr * BB2 * BigR * xjac * (1.d0 + zeta) &
   
                        ! New terms coming from -(\partial_t \rho + \nabla \cdot (\rho \mathbf{v})) \mathbf{v} in RHS of momentum equation
                        ! (see wiki: https://www.jorek.eu/wiki/doku.php?id=model500_501_555#equations):
