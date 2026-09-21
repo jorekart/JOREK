@@ -57,7 +57,7 @@ real*8     :: current_source(n_gauss,n_gauss),particle_source(n_gauss,n_gauss),h
 real*8     :: R_axis, Z_axis, psi_axis, psi_bnd, R_xpoint(2), Z_xpoint(2), dj_dpsi, dj_dz, source_pellet, source_volume
 real*8     :: Bgrad_rho_star,  Bgrad_rho,  Bgrad_vpar,  Bgrad_T_star,  Bgrad_Ti, Bgrad_Te, Bgrad_T, BB2
 real*8     :: Bgrad_rho_star_psi, Bgrad_rho_psi, Bgrad_rho_rho, Bgrad_vpar_vpar, Bgrad_vpar_psi,  Bgrad_T_star_psi, Bgrad_Ti_psi, Bgrad_T_psi, Bgrad_Ti_Ti, Bgrad_Te_psi, Bgrad_T_T, Bgrad_Te_Te, BB2_psi
-real*8     :: Bgrad_rho_k_star, Bgrad_T_k_star, Bgrad_Ti_Ti_n, Bgrad_Te_Te_n, Bgrad_T_T_n, Bgrad_rho_rho_n
+real*8     :: Bgrad_rho_k_star, Bgrad_T_k_star, Bgrad_Ti_Ti_n, Bgrad_Te_Te_n, Bgrad_T_T_n, Bgrad_rho_rho_n, Bgrad_vpar_vpar_n
 real*8     :: Bgrad_rhoimp, Bgrad_rhoimp_psi, Bgrad_rhoimp_rhoimp, Bgrad_rhoimp_rhoimp_n
 real*8     :: ZK_par_T, dZK_par_dT, ZKi_par_T, dZKi_par_dT, ZKe_par_T, dZKe_par_dT
 real*8     :: D_prof, D_par_local, ZK_prof, ZKi_prof, ZKe_prof, psi_norm, theta, zeta, delta_u_x, delta_u_y, delta_ps_x, delta_ps_y
@@ -2344,6 +2344,7 @@ do i=1,n_vertex_max
                   Bgrad_rhoimp_rhoimp_n = ( F0 / BigR * rhoimp_p ) / BigR
                   Bgrad_vpar_psi      = ( vpar0_x  * psi_y - vpar0_y  * psi_x ) / BigR
                   Bgrad_vpar_vpar       = ( vpar_x * ps0_y - vpar_y * ps0_x ) / BigR
+                  Bgrad_vpar_vpar_n     = ( F0 / BigR * vpar_p ) / BigR
 
                   BB2_psi            = 2.d0 * (psi_x * ps0_x + psi_y * ps0_y ) /BigR**2
 
@@ -3183,12 +3184,16 @@ do i=1,n_vertex_max
                                         * (-(ps0_s * v_t    - ps0_t * v_s)   /xjac                     )  * xjac * theta * tstep*tstep &
                               + tgnum_vpar * 0.25d0 * v * Vpar0**2 * BB2 * (1.d0 - fact_conservative_u) &
                                         * (                                        + F0 / BigR * vpar_p) / BigR                        &
-                                        * (-(ps0_s * r0_t   - ps0_t * r0_s)  /xjac + F0 / BigR * r0_p)  * xjac * theta * tstep*tstep 
-  
+                                        * (-(ps0_s * r0_t   - ps0_t * r0_s)  /xjac + F0 / BigR * r0_p)  * xjac * theta * tstep*tstep &
+
+                              + visco_par_par * F0**2 / (BigR * BB2) * Bgrad_vpar_vpar_n * Bgrad_rho_star         * xjac * theta * tstep
+
                     amat_kn(var_vpar,var_vpar) = &
                                + tgnum_vpar * 0.25d0 * r0 * Vpar0**2 * BB2 &
                                          * (                                        + F0 / BigR * vpar_p) / BigR                        &
-                                         * (                                        + F0 / BigR * v_p)  * xjac * theta * tstep*tstep
+                                         * (                                        + F0 / BigR * v_p)  * xjac * theta * tstep*tstep &
+
+                               + visco_par_par * F0**2 / (BigR * BB2) * Bgrad_vpar_vpar_n * Bgrad_rho_k_star       * xjac * theta * tstep
   
                     if ( NEO ) then
                       amat(var_vpar,var_rho) = amat(var_vpar,var_rho) - v * amu_neo_prof(ms,mt)*BB2/(Btheta2+epsil) &

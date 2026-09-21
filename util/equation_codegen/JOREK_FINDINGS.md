@@ -53,32 +53,6 @@ it) and has not been audited here.
 
 ---
 
-## Background: the one-temperature factor of one half
-
-`construct_pressure` is written once for both temperature models and always
-builds the species pressures from the species temperatures:
-
-```fortran
-Pi0 = (r0 + rimp0*alpha_i) * Ti0
-Pe0 = (r0 + rimp0*alpha_e) * Te0
-P0  = Pi0 + Pe0
-```
-
-The one-temperature model evolves the **total** temperature and enters that
-routine with `Ti0 = Te0 = T0/2` (`mod_elt_matrix_fft.f90`, the `Ti0 = T0/2.d0`
-block). Two consequences matter for the Jacobian:
-
-* a tangent taken with respect to `T` must carry the chain factor
-  `dTi0/dT0 = dTe0/dT0 = 1/2`;
-* the stored one-temperature closure values are the means of the per-species
-  ones, `alpha_imp = (alpha_i+alpha_e)/2`,
-  `alpha_imp_bis = (alpha_i+alpha_e_bis)/2` and `alpha_imp_tri = alpha_e_tri/4`.
-
-Most of the one-temperature Jacobian applies this correctly — it is why, for
-example, `amat(var_u,var_T)` uses `tauIC` where the residual uses `tauIC*2.`,
-and why `amat_n(var_psi,var_T)` uses `tauIC` where `amat_n(var_psi,var_Te)`
-uses `tauIC*2.`. Finding 3 is the one place where it does not.
-
 
 ## Finding 4 — the density inward pinch is not differentiated with respect to psi
 
@@ -152,38 +126,6 @@ corresponding `BB2 -> BB2_psi` copy to `amat(var_vpar,var_psi)` and
 
 **Scale:** 84 residual monomials in `amat(var_vpar,var_psi)` and 20 in
 `amat_k(var_vpar,var_psi)`, in each temperature branch.
-
----
-
-## Finding 8 — the toroidal channel of the parallel-parallel viscosity tangent is missing
-
-**Where:** `amat_n(var_vpar,var_vpar)` and `amat_kn(var_vpar,var_vpar)`.
-
-**What happens:** the residual term
-
-```fortran
-- visco_par_par * F0**2 / (BigR * BB2) * Bgrad_vpar * Bgrad_rho_star * xjac * tstep
-```
-
-uses the full parallel gradient
-`Bgrad_vpar = (F0/BigR*vpar0_p + vpar0_x*ps0_y - vpar0_y*ps0_x)/BigR`, but its
-trial-function counterpart is defined with the poloidal half only:
-
-```fortran
-Bgrad_vpar_vpar = ( vpar_x * ps0_y - vpar_y * ps0_x ) / BigR
-```
-
-so the `F0/BigR*vpar_p` part never reaches the Jacobian. Consequently
-`amat_n(var_vpar,var_vpar)` and `amat_kn(var_vpar,var_vpar)` carry no
-`visco_par_par` contribution at all, even though the same tangent is present
-in the `p` and `k` channels.
-
-**Suggested fix:** add a toroidal companion
-`Bgrad_vpar_vpar_n = (F0/BigR*vpar_p)/BigR` and use it in the `n` and `kn`
-channels, exactly as `Bgrad_rho_rho_n` is used in the density equation.
-
-**Scale:** 2 monomials in `amat_n(var_vpar,var_vpar)` and 1 in
-`amat_kn(var_vpar,var_vpar)`, in each temperature branch.
 
 ---
 
