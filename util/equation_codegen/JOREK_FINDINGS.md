@@ -80,57 +80,6 @@ and why `amat_n(var_psi,var_T)` uses `tauIC` where `amat_n(var_psi,var_Te)`
 uses `tauIC*2.`. Finding 3 is the one place where it does not.
 
 
-## Finding 3 — the one-temperature diamagnetic-viscosity tangent is a factor two too large
-
-**Where:** the `else` (single-temperature) branch of the `var_u` block,
-`amat(var_u,var_T)`:
-
-```fortran
-! --- Contributions of the diamagnetic viscosity
-- dvisco_dT     * bigR * W_dia_Ti * (v_x*Ti0_x + v_y*Ti0_y)  * xjac * theta * tstep  &
-- visco_T       * bigR * W_dia_Ti * (v_xx + v_x/bigR + v_yy) * xjac * theta * tstep  &
-- dvisco_dT     * bigR * W_dia    * (v_x*T_x  + v_y*T_y )    * xjac * theta * tstep  &
-```
-
-**What happens:** these three lines are the tangent of the residual terms
-
-```fortran
-+ dvisco_dT * bigR * W_dia * (v_x*Ti0_x + v_y*Ti0_y) * xjac * tstep
-+ visco_T   * bigR * W_dia * (v_xx + v_x/bigR + v_yy) * xjac * tstep
-```
-
-with respect to `T`. Both factors that depend on the ion temperature are
-differentiated without the chain factor `dTi0/dT0 = 1/2`:
-
-* the third line uses `(v_x*T_x + v_y*T_y)`; the variation of `Ti0_x` is
-  `Ti_x = T_x/2`, so it should read `(v_x*T_x + v_y*T_y)/2`;
-* `W_dia_Ti` is assembled from `Pi0_x_Ti`, `Pi0_xx_Ti` and `Pi0_yy_Ti`, which
-  are built from the **trial basis function** `Ti`, `Ti_x`, `Ti_xx`. In the
-  single-temperature branch that basis function is the `var_T` trial function,
-  so `W_dia_Ti = 2 * dW_dia/dT0` and the first two lines are twice their
-  correct value as well.
-
-The remaining two lines of the same block,
-
-```fortran
-- d2visco_dT2*T * bigR * W_dia * (v_x*Ti0_x + v_y*Ti0_y)  * xjac * theta * tstep  &
-- dvisco_dT*T   * bigR * W_dia * (v_xx + v_x/bigR + v_yy) * xjac * theta * tstep  &
-```
-
-are correct: they differentiate `visco(T0)`/`dvisco_dT(T0)`, which depend on
-the evolved temperature directly and carry no chain factor.
-
-**Suggested fix:** halve the three lines listed first, for example by writing
-them with `W_dia_Ti/2.d0` and `(v_x*T_x + v_y*T_y)/2.d0`.
-
-**Effect:** the two-temperature `amat(var_u,var_Ti)` block is unaffected — the
-chain factor is one there — so this is a one-temperature-only error. It makes
-the corresponding Newton block inconsistent with the residual and can slow or
-prevent convergence when the diamagnetic viscosity is active
-(`Wdia = .true.`) in a single-temperature run.
-
----
-
 ## Finding 4 — the density inward pinch is not differentiated with respect to psi
 
 **Where:** the `var_rho` block, `amat(var_rho,var_psi)`.
@@ -175,46 +124,6 @@ pressure). The element routine freezes all of them, and the generator follows
 that convention, so they produce no report differences. The pinch term is
 different: its flux dependence is explicit in the assembled expression rather
 than hidden inside a work value.
-
----
-
-## Finding 5 — the temperature dependence of alpha_e is not differentiated in the density source terms
-
-**Where:** the `var_rho` block, `amat(var_rho,var_Te)` (two-temperature) and
-`amat(var_rho,var_T)` (one-temperature).
-
-**What happens:** the ionization and recombination sources of the density
-equation carry the electron-fraction coefficient `alpha_e`, which is a
-function of the electron temperature (`alpha_e = m_i_over_m_imp*Z_imp - 1`,
-with `dalpha_e_dT = m_i_over_m_imp*dZ_imp_dT`):
-
-```fortran
-+ v * (r0+alpha_e*rimp0) * rn0 * BigR * Sion_T          * xjac * tstep * factor(var_rho,8) &
-- v * (r0+alpha_e*rimp0) * (r0-rimp0) * BigR * Srec_T   * xjac * tstep * factor(var_rho,9)
-```
-
-but the temperature tangent differentiates only the rates:
-
-```fortran
-amat(var_rho,var_Te) = - v * BigR * (r0+alpha_e*rimp0) * rn0 * dSion_dT * Te        * xjac * theta * tstep &
-                       + v * BigR * (r0+alpha_e*rimp0) * (r0-rimp0) * dSrec_dT * Te * xjac * theta * tstep
-```
-
-The momentum equation differentiates the same coefficient in the same source
-terms — `amat(var_u,var_Te)` contains
-`- BigR**3 * (dalpha_e_dT * rimp0 * rn0 * Sion_T * Te) * ...` and its
-recombination partner — so the two equations disagree about whether `alpha_e`
-is a state function.
-
-**Suggested fix:** add, to `amat(var_rho,var_Te)` (and to
-`amat(var_rho,var_T)` with the same spelling in `T`):
-
-```fortran
-- v * BigR * dalpha_e_dT * rimp0 * rn0 * Sion_T * Te          * xjac * theta * tstep &
-+ v * BigR * dalpha_e_dT * rimp0 * (r0-rimp0) * Srec_T * Te   * xjac * theta * tstep
-```
-
-**Scale:** 3 monomials, in each temperature branch.
 
 ---
 

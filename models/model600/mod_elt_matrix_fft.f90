@@ -2815,11 +2815,15 @@ do i=1,n_vertex_max
                   if ( with_TiTe ) then
                     amat(var_rho,var_Ti) = - v * 2.d0 * tauIC*2. * (Ti_y * r0 + Ti*r0_y) * BigR         * xjac * theta * tstep
                     amat(var_rho,var_Te) = - v * BigR * (r0+alpha_e*rimp0) * rn0 * dSion_dT * Te        * xjac * theta * tstep &
-                                           + v * BigR * (r0+alpha_e*rimp0) * (r0-rimp0) * dSrec_dT * Te * xjac * theta * tstep
+                                           + v * BigR * (r0+alpha_e*rimp0) * (r0-rimp0) * dSrec_dT * Te * xjac * theta * tstep &
+                                           - v * BigR * dalpha_e_dT * rimp0 * rn0 * Sion_T * Te         * xjac * theta * tstep &
+                                           + v * BigR * dalpha_e_dT * rimp0 * (r0-rimp0) * Srec_T  * Te * xjac * theta * tstep 
                   else ! (with_TiTe)
                     amat(var_rho,var_T)  = - v * 2.d0 * tauIC * (T_y  * r0 + T *r0_y) * BigR            * xjac * theta * tstep &
                                            - v * BigR * (r0+alpha_e*rimp0) * rn0 * dSion_dT * T         * xjac * theta * tstep &
-                                           + v * BigR * (r0+alpha_e*rimp0) * (r0-rimp0) * dSrec_dT * T  * xjac * theta * tstep 
+                                           + v * BigR * (r0+alpha_e*rimp0) * (r0-rimp0) * dSrec_dT * T  * xjac * theta * tstep &
+                                           - v * BigR * dalpha_e_dT * rimp0 * rn0 * Sion_T * T          * xjac * theta * tstep &
+                                           + v * BigR * dalpha_e_dT *rimp0 * (r0-rimp0) * Srec_T   * T  * xjac * theta * tstep 
                   end if ! (with_TiTe)
 
                   if ( with_vpar ) then
