@@ -595,16 +595,15 @@ def _ionization_energy_transport(v, energy, temperature):
 # Equations
 # -------------------------------------------------------------------------
 # In the order of the element routine.
-def induction_equation_1(
-    *,
-    include_diamag: bool = True,
-    include_runaway_coupling: bool = True,
-    with_TiTe: bool = False,
-):
+def induction_equation_1( with_TiTe: bool = False):
     """Weak form of the induction equation for var_psi."""
 
     v = test_function("v")
     T_or_Te = Te if with_TiTe else T
+    Te_gen = Te if with_TiTe else T / 2
+    # Electron pressure
+    Pe = rho * Te_gen + rhoimp * alpha_e_temperature(Te_gen)
+    rho_corr = corr_neg_dens(rho)
     dV = R * xjac
 
     # Time derivative
@@ -620,233 +619,107 @@ def induction_equation_1(
 
         # hyper-resistivity
         + eta_num_T(T_or_Te) * dot(grad(v), grad(j)) / R
-    )
 
-    if include_runaway_coupling:
-        # -eta*j_RE
-        B += -v * eta(T_or_Te, rho, rhoimp) * aux_jre_ind / R**2
+        # Runaway current coupling, -eta*j_RE
+        -v * eta(T_or_Te, rho, rhoimp) * aux_jre_ind / R**2
 
-    if include_diamag:
-        # In model600 ``r0_corr`` is the corrected density > 0, to avoid
-        # divergence in diamag term denominator.
-        rho_corr = corr_neg_dens(rho)
-        # ``construct_pressure`` builds Pe0 = (r0 + rimp0*alpha_e)*Te0 in both
-        # temperature models.  The one-temperature model evolves the total
-        # temperature and supplies Te0 = T0/2, so the electron temperature is
-        # half of the evolved field there.  alpha_e_temperature carries the
-        # closure's d(alpha_e*Te)/dTe = alpha_e_bis convention.
-        Te_gen = Te if with_TiTe else T / 2
-
-        Pe = rho * Te_gen + rhoimp * alpha_e_temperature(Te_gen)
-
-        # B.grad Pe diamagnetic term
-        B += 2*(
-            - v * tauIC / (rho_corr * _B2(psi)) * F0**2 / R**3 * poiss_bracket_st(psi, Pe) / xjac
-            + v * tauIC / (rho_corr * _B2(psi)) * F0**3 / R**4 * dphi(Pe) 
-        )
-
-    B = B * dV
+        # B.grad Pe diamagnetic term (no impurity contribution)
+        - v * 2 * tauIC / (rho_corr * _B2(psi)) * F0**2 / R**3 * poiss_bracket_st(psi, Pe) / xjac
+        + v * 2 * tauIC / (rho_corr * _B2(psi)) * F0**3 / R**4 * dphi(Pe) 
+        
+    ) * dV
 
     return EvolutionEquation("model600_induction", v, A, B)
 
-def momentum_equation_2(
-    *,
-    with_TiTe=False,
-    include_neo=False,
-):
-    """Model-600 perpendicular momentum equation (``var_u``).
-
-    ``include_neo`` adds the neoclassical friction; the reports omit it by
-    default because the element routine guards it with its own ``NEO``
-    switch.
-    """
+def momentum_equation_2(*, with_TiTe=False, include_neo=False):
+    """Model-600 perpendicular momentum equation (``var_u``). """
 
     v = test_function("v")
     T_or_Te = Te if with_TiTe else T
     alpha_e_value = alpha_e_state(T_or_Te)
     sion_rate = Sion_rate(T_or_Te)
     srec_rate = Srec_rate(T_or_Te)
+    dV = R * xjac
+
     # In the two-temperature branch p0 is the sum of ion and electron
     # pressures; the single-temperature branch uses the unified T field.
     if with_TiTe:
-        pressure = rho * (Ti + Te)
-        pressure_tangent = rho * (Ti + Te)
-        pressure += rhoimp * (alpha_i_state() * Ti + alpha_e_temperature(Te))
-        pressure_tangent += rhoimp * (
-            alpha_i_state() * Ti + alpha_e_bis_state(Te)
-        )
+        pressure = rho * (Ti + Te) + rhoimp * (alpha_i_state() * Ti + alpha_e_temperature(Te))
     else:
-        pressure = rho * T
-        pressure_tangent = pressure
-        pressure += rhoimp * alpha_imp_temperature(T)
-        pressure_tangent += rhoimp * alpha_imp_bis_state(T)
+        pressure = rho * T + rhoimp * alpha_imp_temperature(T)
+
     rho_hat = _rho_hat()
     grad_v = grad(v)
+    grad_u = grad(u)
     grad_omega = grad(omega)
     lap_v = laplacian(v)
     lap_omega = laplacian(omega)
-
-    # Base perpendicular-momentum terms, grouped as they appear in the
-    # weak-form derivation.
-    inertia = (
-        -sp.Rational(1, 2) * _velocity_norm()
-        * (grad_v[0] * dZ(rho_hat) - grad_v[1] * dR(rho_hat))
-        * xjac
-    )
-    advection = -rho_hat * R**2 * omega * poiss_bracket_st(v, u)
-    magnetic = v * poiss_bracket_st(psi, j) - v * F0 / R * dphi(j) * xjac
-    pressure_term = R**2 * poiss_bracket_st(v, pressure)
-    pressure_tangent_term = R**2 * poiss_bracket_st(v, pressure_tangent)
-    viscosity = (
-        -visco(T_or_Te) * R**3 * visco_fact_old
-        * dot(grad_v, grad_omega) * xjac
-        -2 * visco(T_or_Te) * R**2 * visco_fact_new * omega * dR(v) * xjac
-        -visco(T_or_Te) * R * visco_fact_new
-        * (dR(v) * dR(dphi(dphi(u))) + dZ(v) * dZ(dphi(dphi(u))))
-        * xjac
-        -visco_num(T_or_Te) * lap_v * lap_omega * xjac
-    )
-    B = inertia + advection + magnetic + pressure_term + viscosity
     pi = _diamagnetic_pressure(with_TiTe=with_TiTe)
     W_dia = _diamagnetic_viscosity(with_TiTe=with_TiTe)
-    def diamagnetic_from(pressure):
-        return (
-            -v * tauIC * 2 * R**4 * poiss_bracket_st(pressure, omega)
-            -tauIC * 2 * R**3 * dZ(pressure) * dot(grad_v, grad(u)) * xjac
-            -v * tauIC * 2 * R**4 * (
-                dR(dZ(u)) * (dR(dR(pressure)) - dZ(dZ(pressure)))
-                - dR(dZ(pressure)) * (dR(dR(u)) - dZ(dZ(u)))
-            ) * xjac
+    ne = rho + alpha_e_value * rhoimp
+    neutral_sources = ne * rhon * sion_rate - ne * (rho - rhoimp) * srec_rate
+
+    # Time derivative
+    A = R**2 * dV * (
+        - corr_neg_dens(freeze(rho)) * dot(grad_v, grad_u)
+        - fact_conservative_u * rho * dot(grad_v, grad(freeze(u))) # Not sure one should freeze u
+    )
+
+    # The RHS, in the order the element routine builds it.
+    B = (
+        # Perpendicular inertia (poloidal Jacobian of the kinetic energy).
+        - R * sp.Rational(1, 2) * (dR(u)**2 + dZ(u)**2) * poiss_bracket(v, rho_hat)
+
+        # Vorticity advection.
+        - R**3 * rho * omega * poiss_bracket_st(v, u) / xjac
+
+        # jxB force term. which here is B.gra j
+        + v * poiss_bracket_st(psi, j) / dV
+        - v * F0 * dphi(j) / R**2
+
+        # Pressure advection.
+        + R * poiss_bracket_st(v, pressure) / xjac
+
+        # Perpendicular and toroidal viscosity.
+        - visco(T_or_Te) * R**2 * visco_fact_old * dot(grad_v, grad_omega)
+        - 2 * visco(T_or_Te) * R * visco_fact_new * omega * dR(v)
+        - visco(T_or_Te) * visco_fact_new * (dR(v) * dR(dphi(dphi(u))) + dZ(v) * dZ(dphi(dphi(u))))
+        - visco_num(T_or_Te) * lap_v * lap_omega / R
+
+        # Diamagnetic pressure advection and diamagnetic viscosity.
+        - v * tauIC * 2 * R**3 * poiss_bracket_st(pi, omega) / xjac
+        - tauIC * 2 * R**2 * dZ(pi) * dot(grad_v, grad_u)
+        - v * tauIC * 2 * R**3 * (dR(dZ(u)) * (dR(dR(pi)) - dZ(dZ(pi))) - dR(dZ(pi)) * (dR(dR(u)) - dZ(dZ(u))))
+        + dvisco_state(T_or_Te) * W_dia * dot(grad(Ti if with_TiTe else T / 2), grad_v)
+        + visco(T_or_Te) * W_dia * lap_v
+
+        # Conservative form of the momentum equation.
+        + fact_conservative_u * dot(grad_v, grad_u) * (
+            - R * poiss_bracket(rho_hat, u)
+            + F0 * (rho * dphi(vpar) + vpar * dphi(rho))
+            + R * rho * poiss_bracket(vpar, psi)
+            + R * vpar * poiss_bracket(rho, psi)
         )
 
-    diamagnetic = diamagnetic_from(pi)
-    diamagnetic_viscosity = (
-        dvisco_state(T_or_Te) * R * W_dia
-        * dot(grad(Ti if with_TiTe else T / 2), grad_v) * xjac
-        + visco(T_or_Te) * R * W_dia * lap_v * xjac
-    )
-    B += diamagnetic + diamagnetic_viscosity
-    grad_u = grad(u)
-    velocity_contraction = dot(grad_v, grad_u)
-    rho_hat_x = dR(rho_hat)
-    rho_hat_y = dZ(rho_hat)
-    conservative = fact_conservative_u * (
-        -R**2 * (rho_hat_x * dZ(u) - rho_hat_y * dR(u))
-        * velocity_contraction * xjac
-        +R * F0 * (rho * dphi(vpar) + vpar * dphi(rho))
-        * velocity_contraction * xjac
-        +R**2 * rho * (dR(vpar) * dZ(psi) - dZ(vpar) * dR(psi))
-        * velocity_contraction * xjac
-        +R**2 * vpar * (dR(rho) * dZ(psi) - dZ(rho) * dR(psi))
-        * velocity_contraction * xjac
-    )
-    B += conservative
-    source_contraction = dot(grad_v, grad(u)) * xjac
-    neutral_sources = (
-        (rho + alpha_e_value * rhoimp) * rhon * sion_rate
-        - (rho + alpha_e_value * rhoimp) * (rho - rhoimp) * srec_rate
-    )
-    # Runaway/auxiliary pressure contributions are supplied as scalar
-    # work variables by JOREK and enter the weak form directly.
-    B += (
-        -R * v * (aux_P_par_re + aux_P_perp_re) * xjac
-        +R**2 * (
-            -aux_divPIR_perp * dZ(v)
-            +aux_divPIZ_perp * dR(v)
-        ) * xjac
-    )
-    B += (
-        (1 - delta_n_convection) * R**3
-        * neutral_sources * source_contraction
-        + (1 - fact_conservative_u) * R**3
-        * (particle_source + source_pellet + source_bg_drift + source_imp_drift)
-        * source_contraction
-    )
-    # The Taylor-Galerkin residual is a single product of two poloidal
-    # brackets per contribution.  The Fortran Jacobian writes the two
-    # summands of the product rule separately, which is exactly what the
-    # directional derivative of this compact form returns; writing the
-    # residual itself in split form would count it twice and would double
-    # the omega and density tangents.
-    velocity_cross = poiss_bracket(v, u)
-    tgnum = (
-        -tgnum_u * sp.Rational(1, 4) * rho_hat * R**3
-        * poiss_bracket(omega, u) * velocity_cross * xjac * tstep
-        -tgnum_u * sp.Rational(1, 4) * omega * R**3
-        * poiss_bracket(rho_hat, u) * velocity_cross * xjac * tstep
-        * fact_conservative_u
-    )
-    B += tgnum
-    if include_neo:
-        grad_psi = grad(psi)
-        grad_u = grad(u)
-        # JOREK uses the common-temperature pressure in the one-temperature
-        # branch, while the two-temperature branch uses the ion pressure and
-        # an additional ion-temperature contribution.  Keeping this choice
-        # explicit is important: the NEO tangent is formed from the same
-        # branch-specific residual, not from a universally doubled term.
-        if with_TiTe:
-            # The NEO work variable ``Pi0`` in JOREK is the main-ion pressure
-            # ``r0*Ti0``.  Impurity pressure enters the separate impurity
-            # extensions, not this NEO force, even when those extensions are
-            # enabled for the surrounding momentum equation.
-            grad_pi = grad(rho * Ti)
-            grad_ti = grad(Ti)
-            neo_temperature_factor = sp.Integer(2)
-        else:
-            grad_pi = grad(rho * T)
-            grad_ti = grad(T)
-            # The residual uses the same factor-two diamagnetic pressure
-            # convention as the source NEO RHS.  The one-temperature AMAT
-            # override below adjusts only the temperature tangent to the
-            # legacy undoubled form used by the element routine.
-            neo_temperature_factor = sp.Integer(2)
-        btheta2 = (grad_psi[0]**2 + grad_psi[1]**2) / R**2
-        neo_force = (
-            rho * dot(grad_psi, grad_u)
-            +tauIC * neo_temperature_factor * dot(grad_psi, grad_pi)
-            +aki_neo_prof * tauIC * neo_temperature_factor
-            * rho * dot(grad_psi, grad_ti)
-            -rho * vpar * btheta2
+        # Runaway/auxiliary pressure contributions
+        - v * (aux_P_par_re + aux_P_perp_re)
+        + R * (-aux_divPIR_perp * dZ(v) + aux_divPIZ_perp * dR(v))
+
+        # Momentum carried by the neutral and particle sources
+        + R**2 * dot(grad_v, grad_u) * (
+            (1 - delta_n_convection) * neutral_sources
+            + (1 - fact_conservative_u) * (particle_source + source_pellet + source_bg_drift + source_imp_drift)
         )
-        neo_contribution = (
-            # ``BB2`` is a work variable in the element routine and is frozen
-            # in the Newton tangent.  The poloidal ``Btheta2`` factor is
-            # differentiated separately below, but the numerator must not
-            # contribute a ``BB2_psi`` variation.
-            amu_neo_prof * _B2(freeze(psi))
-            / (btheta2 + epsil)**2
-            * dot(grad_psi, grad_v) * neo_force * R * xjac
-        )
-        B += neo_contribution
-    # The element routine uses the corrected density ``r0_corr`` in the
-    # velocity mass matrix.  Keep the correction evaluated at the current
-    # state, while freezing its density argument for the tangent; this gives
-    # the expected corrected-density coefficient in ``amat(var_u,var_u)``
-    # without introducing an artificial density derivative there.
-    A = -R * _rho_hat(corr_neg_dens(freeze(rho))) * dot(grad(v), grad(u)) * xjac
-    # Conservative momentum form contributes an additional mass-like term.
-    # It is part of A (and therefore carries the (1+zeta) factor in AMAT),
-    # rather than B; omitting it loses the ``rho`` and ``rho_corr`` terms in
-    # the u/u and u/rho blocks.
-    # JOREK's conservative history contribution is evaluated with the
-    # background velocity.  It contributes to the rho-history tangent,
-    # but not to amat(var_u,var_u).
-    A += (
-        -fact_conservative_u * R**3 * rho
-        * dot(grad(v), grad(freeze(u))) * xjac
-    )
-    # The one-temperature ion temperature Ti0 = T0/2 is now carried by the
-    # residual itself, so the temperature column needs no tangent override.
-    overrides = {}
-    return EvolutionEquation(
-        "model600_momentum",
-        v,
-        A,
-        B,
-        kind="evolution",
-        amat_variation_overrides=overrides,
-    )
+
+        # Taylor-Galerkin stabilization. 
+        - tgnum_u * sp.Rational(1, 4) * R**4 * rho* poiss_bracket(omega, u) * poiss_bracket(v, u) * tstep
+        - tgnum_u * sp.Rational(1, 4) * R**2 * omega * fact_conservative_u * poiss_bracket(rho_hat, u) * poiss_bracket(v, u) * tstep
+
+    ) * dV
+
+    # Neo-classical terms still missing!
+
+    return EvolutionEquation("model600_momentum", v, A, B, kind="evolution", amat_variation_overrides={})
 
 def current_constraint_equation_zj():
     """Model-600 current-definition equation for ``var_zj``."""
@@ -869,8 +742,6 @@ def density_equation_rho(*, with_TiTe=False):
     T_or_Te = Te if with_TiTe else T
     rho_main = rho - rhoimp
     ne = rho + alpha_e_state(T_or_Te) * rhoimp
-    # The parallel diffusivity in excess of the perpendicular one; the element
-    # routine writes the same grouping for the impurity species.
     D_par_tot = D_par_local + D_par_sc_num * tau_sc 
     D_par_imp_tot = D_par_local_imp + D_par_imp_sc_num * tau_sc 
     psi_gradient = grad(psi)
@@ -881,28 +752,37 @@ def density_equation_rho(*, with_TiTe=False):
 
     # Other terms and RHS
     B = (
-        + v * (particle_source+source_pellet+source_bg_drift+source_imp_drift) 
-        + v * _u_convection(rho) 
-        + v * _parallel_convection(rho)  
-        + tgnum_rho * _dens_tgnum_intg_by_parts(v, rho) 
-        # The main species diffuses with the excess of the bulk diffusivity and
-        # the impurity one with its own.
-        + (D_par_tot-D_prof)         * _par_diff_intg_by_parts(v, rho_main) 
-        + (D_par_imp_tot-D_prof_imp) * _par_diff_intg_by_parts(v, rhoimp)   
-        - D_prof  * _diffusion_tot_intg_by_parts(v, rho_main) 
-        - D_prof_imp *     _diffusion_tot_intg_by_parts(v, rhoimp)
-        - D_perp_num_psin * laplacian(v) * laplacian(rho) 
-        # Diamagnetic drift, atomic sources and the kinetic coupling.
-        + v * 2 * tauIC * 2 * dZ(_diamagnetic_pressure(with_TiTe=with_TiTe))
+        # particle sources
+        + v * (particle_source+source_pellet+source_bg_drift+source_imp_drift+aux_rho0) 
+
+        # sources/sinks due to neutrals
         + v * ne * rhon * Sion_rate(T_or_Te) 
         - v * ne * rho_main * Srec_rate(T_or_Te) 
-        + v * aux_rho0 
-        # Weak form of -div(rho*V_pinch) with
-        # V_pinch = -V_prof_pinch*grad(psi)/|grad(psi)|.  The pinch direction
-        # is built from the evolved flux, so it is varied like any other state
-        # quantity; the element routine freezes it (see JOREK_FINDINGS.md).
-        - V_prof_pinch / sp.sqrt(psi_gradient[0]**2 + psi_gradient[1]**2)
-        * dot(grad(v), psi_gradient) * rho 
+
+        # convection/compression by u variable (ExB)
+        + v * _u_convection(rho) 
+
+        # parallel convection/compression by vpar
+        + v * _parallel_convection(rho)  
+
+        # parallel and perpendicular diffusion of main ions
+        + (D_par_tot-D_prof) * _par_diff_intg_by_parts(v, rho_main) 
+        - D_prof        * _diffusion_tot_intg_by_parts(v, rho_main) 
+
+        # parallel and perpendicular diffusion of impurities (total mass)
+        + (D_par_imp_tot-D_prof_imp) * _par_diff_intg_by_parts(v, rhoimp)   
+        - D_prof_imp *     _diffusion_tot_intg_by_parts(v, rhoimp)
+
+        # numerical stabilization
+        + tgnum_rho * _dens_tgnum_intg_by_parts(v, rho) 
+        - D_perp_num_psin * laplacian(v) * laplacian(rho) 
+
+        # Diamagnetic drift
+        + v * 2 * tauIC * 2 * dZ(_diamagnetic_pressure(with_TiTe=with_TiTe))
+
+        # Pinch term, not sure about this one here
+        - V_prof_pinch / sp.sqrt(psi_gradient[0]**2 + psi_gradient[1]**2) * dot(grad(v), psi_gradient) * rho 
+
     ) * dV
     return EvolutionEquation("model600_density", v, A, B)
 
@@ -979,12 +859,7 @@ def parallel_velocity_equation_vpar(*, with_TiTe=False, st_form=True):
     return EvolutionEquation("model600_parallel_velocity", v, A, B)
 
 def impurity_density_equation_rhoimp(*, with_TiTe=False):
-    """Model-600 impurity-density equation (``var_rhoimp``).
-
-    The impurity species is advected and diffused like the main one, but it
-    has no atomic sources and no diamagnetic contribution; the element routine
-    marks the latter with an explicit placeholder comment.
-    """
+    """Model-600 impurity-density equation (``var_rhoimp``)"""
 
     v = test_function("v")
     D_par_imp_tot = D_par_local_imp + D_par_imp_sc_num * tau_sc
@@ -995,13 +870,22 @@ def impurity_density_equation_rhoimp(*, with_TiTe=False):
 
     # Other terms and RHS
     B = (
+        # particle sources
+        + v * source_imp_drift 
+
+        # convection/compression by u variable (ExB)
         + v * _u_convection(rhoimp) 
+
+        # parallel convection/compression by vpar
         + v * _parallel_convection(rhoimp)
-        + tgnum_rhoimp * _dens_tgnum_intg_by_parts(v, rhoimp)
+
+        # parallel and perpendicular diffusion
         + (D_par_imp_tot-D_prof_imp) * _par_diff_intg_by_parts(v, rhoimp)
         - D_prof_imp  * _diffusion_tot_intg_by_parts(v, rhoimp)
+
+        # numerical stabilization
+        + tgnum_rhoimp * _dens_tgnum_intg_by_parts(v, rhoimp)
         - Dn_perp_num * laplacian(v) * laplacian(rhoimp)
-        + v * source_imp_drift 
     ) * dV
     
     return EvolutionEquation("model600_impurity_density", v, A, B)
@@ -1122,3 +1006,4 @@ def total_energy_equation_T(*, st_form=True):
         + (GAMMA - 1) * ionization_energy
     )
     return EvolutionEquation("model600_total_energy", v, A, B)
+
