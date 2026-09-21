@@ -14,8 +14,6 @@ from .symbols import coefficient, field, freeze, test_function
 
 # Model-600 extension fields.  The model199 declarations are reused so their
 # current/trial and Fortran naming conventions remain identical.
-
-
 # -------------------------------------------------------------------------
 # Fields
 # -------------------------------------------------------------------------
@@ -69,8 +67,6 @@ aux_P_par_re = coefficient("aux_P_par_re")
 aux_P_perp_re = coefficient("aux_P_perp_re")
 aux_divPIR_perp = coefficient("aux_divPIR_perp")
 aux_divPIZ_perp = coefficient("aux_divPIZ_perp")
-
-
 D_par_local = coefficient("D_par_local")
 D_par_local_imp = coefficient("D_par_local_imp")
 D_par_sc_num = coefficient("D_par_sc_num")
@@ -111,7 +107,6 @@ tgnum_T = coefficient("tgnum_T")
 T_min_neg = coefficient("T_min_neg")
 aux_E0 = coefficient("aux_E0")
 
-
 # -------------------------------------------------------------------------
 # State-dependent work values
 # -------------------------------------------------------------------------
@@ -121,11 +116,7 @@ aux_E0 = coefficient("aux_E0")
 eta = external_function(
     "eta600",
     arguments=("T", "rho", "rhoimp"),
-    derivatives={
-        "T": "deta_dT",
-        "rho": "deta_dr0",
-        "rhoimp": "deta_drimp0",
-    },
+    derivatives={"T": "deta_dT", "rho": "deta_dr0", "rhoimp": "deta_drimp0",},
     policy="piecewise_active",
     fortran_name="eta_T",
 )
@@ -222,10 +213,7 @@ W_dia_single = external_function(
 W_dia_two = external_function(
     "W_dia_two600",
     arguments=("rho", "Ti"),
-    derivatives={
-        "rho": "W_dia_rho",
-        "Ti": "W_dia_Ti",
-    },
+    derivatives={"rho": "W_dia_rho", "Ti": "W_dia_Ti",},
     policy="piecewise_active",
     fortran_name="W_dia",
 )
@@ -248,10 +236,7 @@ visco_heating = external_function(
 
 Ti_e_exchange = external_function(
     "dTi_e600", arguments=("Ti", "Te", "rho", "rhoimp"),
-    derivatives={
-        "Ti": "ddTi_e_dTi", "Te": "ddTi_e_dTe",
-        "rho": "ddTi_e_drho", "rhoimp": "ddTi_e_drhoimp",
-    },
+    derivatives={"Ti": "ddTi_e_dTi", "Te": "ddTi_e_dTe", "rho": "ddTi_e_drho", "rhoimp": "ddTi_e_drhoimp"},
     policy="piecewise_active", fortran_name="dTi_e",
 )
 
@@ -289,10 +274,7 @@ ZKe_perp = external_function(
 
 eta_ohm_e = external_function(
     "eta_ohm600", arguments=("Te", "rho", "rhoimp"),
-    derivatives={
-        "Te": "deta_dT_ohm", "rho": "deta_dr0_ohm",
-        "rhoimp": "deta_drimp0_ohm",
-    },
+    derivatives={"Te": "deta_dT_ohm", "rho": "deta_dr0_ohm", "rhoimp": "deta_drimp0_ohm"},
     policy="piecewise_active", fortran_name="eta_T_ohm",
 )
 
@@ -328,10 +310,7 @@ Lrad_state = external_function(
 
 Te_i_exchange = external_function(
     "dTe_i600", arguments=("Ti", "Te", "rho", "rhoimp"),
-    derivatives={
-        "Ti": "ddTe_i_dTi", "Te": "ddTe_i_dTe",
-        "rho": "ddTe_i_drho", "rhoimp": "ddTe_i_drhoimp",
-    },
+    derivatives={"Ti": "ddTe_i_dTi", "Te": "ddTe_i_dTe", "rho": "ddTe_i_drho", "rhoimp": "ddTe_i_drhoimp"},
     policy="piecewise_active", fortran_name="dTe_i",
 )
 
@@ -371,7 +350,6 @@ T_floor_exp = external_function(
     "T_floor_exp600", arguments=("T",), derivatives={"T": "dT_floor_exp"},
     policy="piecewise_active", fortran_name="T_floor_exp",
 )
-
 
 # -------------------------------------------------------------------------
 # Operators and shared term groups
@@ -463,31 +441,35 @@ def _press_convec_comp(pressure, *, bracket):
 
 
 def _heat_conduction(v, temperature, parallel, perpendicular, numerical):
-    """Parallel, perpendicular and numerical conduction of one temperature."""
+    """Parallel, perpendicular and numerical conduction of one temperature.
+
+    Reduced by ``dV = R*xjac``, like every other term in the Ti/Te/T
+    equations; the caller multiplies the whole right-hand side by ``dV``.
+    """
 
     return (
-        -(parallel - perpendicular) * R / _B2(psi)
-        * _B_dot_grad(v) * _B_dot_grad(temperature) * xjac
-        - perpendicular * R * _diffusion_tot_intg_by_parts(v, temperature) * xjac
-        - numerical * laplacian(v) * laplacian(temperature) * R * xjac
+        -(parallel - perpendicular) / _B2(psi)
+        * _B_dot_grad(v) * _B_dot_grad(temperature)
+        - perpendicular * _diffusion_tot_intg_by_parts(v, temperature)
+        - numerical * laplacian(v) * laplacian(temperature)
     )
 
 
 def _energy_tgnum(v, pressure, factor):
-    """Taylor-Galerkin stabilization of an energy equation."""
+    """Taylor-Galerkin stabilization of an energy equation.  Reduced by ``dV``."""
 
     return (
-        -factor * sp.Rational(1, 4) * R**3
-        * poiss_bracket(pressure, u) * poiss_bracket(v, u) * xjac * tstep
-        - factor * sp.Rational(1, 4) * R * vpar**2
-        * _B_dot_grad(pressure) * _B_dot_grad(v) * xjac * tstep
+        -factor * sp.Rational(1, 4) * R**2
+        * poiss_bracket(pressure, u) * poiss_bracket(v, u) * tstep
+        - factor * sp.Rational(1, 4) * vpar**2
+        * _B_dot_grad(pressure) * _B_dot_grad(v) * tstep
     )
 
 
 def _heating_floor(v, exponential, floor, minimum):
-    """Implicit heating that keeps a temperature away from its floor."""
+    """Implicit heating that keeps a temperature away from its floor.  Reduced by ``dV``."""
 
-    return implicit_heat_source * (gamma - 1) * v * R * xjac * (
+    return implicit_heat_source * (gamma - 1) * v * (
         sp.Rational(1, 2) * minimum * (1 + exponential) - floor
     )
 
@@ -502,59 +484,62 @@ def _released_kinetic_energy(T_or_Te):
 
 
 def _friction_heating(v, released):
-    """Kinetic energy handed to the ions by the particle sources."""
+    """Kinetic energy handed to the ions by the particle sources.  Reduced by ``dV``."""
 
     return (
-        v * R * (GAMMA - 1) / 2
-        * (vpar**2 * _B2(psi) + _velocity_norm(u)) * released * xjac
+        v * (GAMMA - 1) / 2
+        * (vpar**2 * _B2(psi) + _velocity_norm(u)) * released
     )
 
 
 def _viscous_heating(v, heating):
-    """Parallel and perpendicular viscous heating."""
+    """Parallel and perpendicular viscous heating.  Reduced by ``dV``."""
 
     grad_vpar = grad(vpar)
     return (
-        (GAMMA - 1) * R * visco_par_heating * xjac * (
+        (GAMMA - 1) * visco_par_heating * (
             v * dot(grad_vpar, grad_vpar) + vpar * dot(grad(v), grad_vpar)
         )
-        - (GAMMA - 1) * v * heating * R**3 * visco_fact_old
-        * dot(grad(u), grad(omega)) * xjac
-        - (GAMMA - 1) * v * heating * 2 * R**2 * visco_fact_new
-        * omega * dR(u) * xjac
-        - (GAMMA - 1) * v * heating * R * visco_fact_new
-        * (dR(u) * dR(dphi(dphi(u))) + dZ(u) * dZ(dphi(dphi(u)))) * xjac
+        - (GAMMA - 1) * v * heating * R**2 * visco_fact_old
+        * dot(grad(u), grad(omega))
+        - (GAMMA - 1) * v * heating * 2 * R * visco_fact_new
+        * omega * dR(u)
+        - (GAMMA - 1) * v * heating * visco_fact_new
+        * (dR(u) * dR(dphi(dphi(u))) + dZ(u) * dZ(dphi(dphi(u))))
     )
 
 
 def _kinetic_coupling(v):
-    """Energy and momentum handed over by the kinetic neutral/impurity model."""
+    """Energy and momentum handed over by the kinetic neutral/impurity model.
+
+    Reduced by ``dV``.
+    """
 
     return (
         (gamma - 1) * sp.Rational(1, 2) * v * aux_rho0
-        * vpar**2 * _B2(psi) * R * xjac
-        - (gamma - 1) * v * aux_mom_par0 * vpar * R * xjac
+        * vpar**2 * _B2(psi)
+        - (gamma - 1) * v * aux_mom_par0 * vpar
     )
 
 
 def _ohmic_heating(v, resistivity):
-    """Ohmic dissipation of the toroidal current."""
+    """Ohmic dissipation of the toroidal current.  Reduced by ``dV``."""
 
-    return v * (GAMMA - 1) * resistivity * ((j - aux_jre) / R)**2 * R * xjac
+    return v * (GAMMA - 1) * resistivity * ((j - aux_jre) / R)**2
 
 
 def _radiation_sinks(v, electron_density, temperature):
-    """Line, continuum, background and impurity radiation."""
+    """Line, continuum, background and impurity radiation.  Reduced by ``dV``."""
 
     return (
-        -v * R * electron_density * corr_neg_dens_n(rhon)
-        * LradDrays(temperature) * xjac
-        - v * R * electron_density
+        -v * electron_density * corr_neg_dens_n(rhon)
+        * LradDrays(temperature)
+        - v * electron_density
         * (corr_neg_dens(rho) - corr_neg_dens_imp(rhoimp))
-        * LradDcont(temperature) * xjac
-        - v * R * electron_density * frad_bg_state(temperature) * xjac
-        - v * R * electron_density * corr_neg_dens_imp(rhoimp)
-        * Lrad_state(temperature) * xjac
+        * LradDcont(temperature)
+        - v * electron_density * frad_bg_state(temperature)
+        - v * electron_density * corr_neg_dens_imp(rhoimp)
+        * Lrad_state(temperature)
     )
 
 
@@ -565,7 +550,8 @@ def _ionization_energy(temperature):
 
 
 def _ionization_energy_transport(v, energy, temperature):
-    """Transport and diffusive flux of the ionization potential energy.
+    """Transport and diffusive flux of the ionization potential energy.  Reduced
+    by ``dV``.
 
     The element routine keeps this group in element coordinates even where the
     pressure advection right above it uses physical ones.
@@ -575,19 +561,19 @@ def _ionization_energy_transport(v, energy, temperature):
     d_par_imp_tot = D_par_local_imp + D_par_imp_sc_num * tau_sc - D_prof_imp
     bb2 = _B2(psi)
     return (GAMMA - 1) * (
-        v * R**2 * poiss_bracket_st(energy, u)
-        + 2 * v * R * energy * dZ(u) * xjac
-        - v * F0 / R * vpar * dphi(energy) * xjac
-        - v * vpar * poiss_bracket_st(energy, psi)
-        - v * energy * R * xjac * _B_dot_grad(vpar, st_form=True)
-        - E_ion_state(temperature) * d_par_imp_tot * R / bb2
-        * _B_dot_grad(v) * _B_dot_grad(rhoimp) * xjac
-        - E_ion_state(temperature) * D_prof_imp * R
-        * _diffusion_tot_intg_by_parts(v, rhoimp) * xjac
-        - E_ion_bg_state() * d_par_tot * R / bb2
-        * _B_dot_grad(v) * _B_dot_grad(rho - rhoimp) * xjac
-        - E_ion_bg_state() * D_prof * R
-        * _diffusion_tot_intg_by_parts(v, rho - rhoimp) * xjac
+        v * R * poiss_bracket_st(energy, u) / xjac
+        + 2 * v * energy * dZ(u)
+        - v * F0 * vpar * dphi(energy) / R**2
+        - v * vpar * poiss_bracket_st(energy, psi) / (R * xjac)
+        - v * energy * _B_dot_grad(vpar, st_form=True)
+        - E_ion_state(temperature) * d_par_imp_tot / bb2
+        * _B_dot_grad(v) * _B_dot_grad(rhoimp)
+        - E_ion_state(temperature) * D_prof_imp
+        * _diffusion_tot_intg_by_parts(v, rhoimp)
+        - E_ion_bg_state() * d_par_tot / bb2
+        * _B_dot_grad(v) * _B_dot_grad(rho - rhoimp)
+        - E_ion_bg_state() * D_prof
+        * _diffusion_tot_intg_by_parts(v, rho - rhoimp)
     )
 
 
@@ -901,12 +887,19 @@ def ion_energy_equation_Ti(*, st_form=True):
 
     v = test_function("v")
     bracket = poiss_bracket_st if st_form else (lambda a, b: poiss_bracket(a, b) * xjac)
+    dV = R * xjac
     ion_density = rho + alpha_i_state() * rhoimp
     ion_pressure = ion_density * Ti
 
+    # Time derivative
+    A = v * (
+        corr_neg_dens(rho) + alpha_i_state() * corr_neg_dens_imp(rhoimp)
+    ) * Ti * dV
+
+    # RHS
     B = (
-        + v * R * heat_source_i * xjac
-        + v * _press_convec_comp(ion_pressure, bracket=bracket) * R * xjac
+        + v * heat_source_i
+        + v * _press_convec_comp(ion_pressure, bracket=bracket)
         + _heat_conduction(v, Ti, ZKi_par(Ti), ZKi_perp(rho), ZK_i_perp_num_psin)
         + _energy_tgnum(v, ion_pressure, tgnum_Ti)
         + _friction_heating(v, _released_kinetic_energy(Te))
@@ -914,13 +907,10 @@ def ion_energy_equation_Ti(*, st_form=True):
         + _heating_floor(v, Ti_floor_exp(Ti), Ti_floor(Ti), Tie_min_neg)
         + _kinetic_coupling(v)
         # Ion-electron energy exchange, recombination sink, kinetic coupling.
-        + v * R * Ti_e_exchange(Ti, Te, rho, rhoimp) * xjac
-        - v * Ti * R * corr_neg_dens(rho)**2 * Srec_rate(Te) * xjac
-        + v * R * aux_E0_Ti * xjac
-    )
-    A = v * (
-        corr_neg_dens(rho) + alpha_i_state() * corr_neg_dens_imp(rhoimp)
-    ) * Ti * R * xjac
+        + v * Ti_e_exchange(Ti, Te, rho, rhoimp)
+        - v * Ti * corr_neg_dens(rho)**2 * Srec_rate(Te)
+        + v * aux_E0_Ti
+    ) * dV
     return EvolutionEquation("model600_ion_energy", v, A, B)
 
 def electron_energy_equation_Te(*, st_form=True):
@@ -939,13 +929,21 @@ def electron_energy_equation_Te(*, st_form=True):
 
     v = test_function("v")
     bracket = poiss_bracket_st if st_form else (lambda a, b: poiss_bracket(a, b) * xjac)
+    dV = R * xjac
     electron_pressure = rho * Te + rhoimp * alpha_e_temperature(Te)
     electron_density = corr_neg_dens(rho) + alpha_e_state(Te) * corr_neg_dens_imp(rhoimp)
     ionization_energy = _ionization_energy(Te)
 
+    # Time derivative
+    A = v * (
+        corr_neg_dens(rho) * Te + corr_neg_dens_imp(rhoimp) * alpha_e_temperature(Te)
+        + (GAMMA - 1) * ionization_energy
+    ) * dV
+
+    # RHS
     B = (
-        + v * R * heat_source_e * xjac
-        + v * _press_convec_comp(electron_pressure, bracket=bracket) * R * xjac
+        + v * heat_source_e
+        + v * _press_convec_comp(electron_pressure, bracket=bracket)
         + _heat_conduction(v, Te, ZKe_par(Te), ZKe_perp(rho), ZK_e_perp_num_psin)
         + _energy_tgnum(v, electron_pressure, tgnum_Te)
         + _ohmic_heating(v, eta_ohm_e(Te, rho, rhoimp))
@@ -953,16 +951,11 @@ def electron_energy_equation_Te(*, st_form=True):
         + _heating_floor(v, Te_floor_exp(Te), Te_floor(Te), Tie_min_neg)
         + _ionization_energy_transport(v, ionization_energy, Te)
         # Ionization sink, ion-electron exchange, plasmoid-drift teleportation.
-        - v * R * ksi_ion_norm * (rho + alpha_e_state(Te) * rhoimp)
-        * rhon * Sion_rate(Te) * xjac
-        + v * R * Te_i_exchange(Ti, Te, rho, rhoimp) * xjac
-        + v * R * power_dens_teleport_ju * xjac
-        + v * R * aux_E0_Te * xjac
-    )
-    A = v * R * xjac * (
-        corr_neg_dens(rho) * Te + corr_neg_dens_imp(rhoimp) * alpha_e_temperature(Te)
-        + (GAMMA - 1) * ionization_energy
-    )
+        - v * ksi_ion_norm * (rho + alpha_e_state(Te) * rhoimp) * rhon * Sion_rate(Te)
+        + v * Te_i_exchange(Ti, Te, rho, rhoimp)
+        + v * power_dens_teleport_ju
+        + v * aux_E0_Te
+    ) * dV
     return EvolutionEquation("model600_electron_energy", v, A, B)
 
 def total_energy_equation_T(*, st_form=True):
@@ -977,13 +970,21 @@ def total_energy_equation_T(*, st_form=True):
 
     v = test_function("v")
     bracket = poiss_bracket_st if st_form else (lambda a, b: poiss_bracket(a, b) * xjac)
+    dV = R * xjac
     pressure = rho * T + rhoimp * alpha_imp_temperature(T)
     electron_density = corr_neg_dens(rho) + alpha_e_state(T) * corr_neg_dens_imp(rhoimp)
     ionization_energy = _ionization_energy(T)
 
+    # Time derivative
+    A = v * (
+        corr_neg_dens(rho) * T + corr_neg_dens_imp(rhoimp) * alpha_imp_temperature(T)
+        + (GAMMA - 1) * ionization_energy
+    ) * dV
+
+    # RHS
     B = (
-        + v * R * heat_source_total * xjac
-        + v * _press_convec_comp(pressure, bracket=bracket) * R * xjac
+        + v * heat_source_total
+        + v * _press_convec_comp(pressure, bracket=bracket)
         + _heat_conduction(v, T, ZK_par(T), ZK_perp(rho), ZK_perp_num_psin)
         + _energy_tgnum(v, pressure, tgnum_T)
         + _ohmic_heating(v, eta_ohm_e(T, rho, rhoimp))
@@ -994,16 +995,11 @@ def total_energy_equation_T(*, st_form=True):
         + _ionization_energy_transport(v, ionization_energy, T)
         + _kinetic_coupling(v)
         # Ionization and recombination sinks, teleportation, kinetic coupling.
-        - v * R * ksi_ion_norm * (rho + alpha_e_state(T) * rhoimp)
-        * rhon * Sion_rate(T) * xjac
-        - (GAMMA - 1) * v * sp.Rational(1, 2) * T * R
-        * corr_neg_dens(rho)**2 * Srec_rate(T) * xjac
-        + v * R * power_dens_teleport_ju * xjac
-        + v * R * aux_E0 * xjac
-    )
-    A = v * R * xjac * (
-        corr_neg_dens(rho) * T + corr_neg_dens_imp(rhoimp) * alpha_imp_temperature(T)
-        + (GAMMA - 1) * ionization_energy
-    )
+        - v * ksi_ion_norm * (rho + alpha_e_state(T) * rhoimp) * rhon * Sion_rate(T)
+        - (GAMMA - 1) * v * sp.Rational(1, 2) * T * corr_neg_dens(rho)**2 * Srec_rate(T)
+        + v * power_dens_teleport_ju
+        + v * aux_E0
+    ) * dV
     return EvolutionEquation("model600_total_energy", v, A, B)
+
 
