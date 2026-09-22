@@ -7,8 +7,6 @@ import argparse
 import getpass
 from scipy import interpolate
 from scipy.interpolate import griddata
-import matplotlib.pyplot as plt
-
 
 # --- Routine to find index with nearest float value in an array
 def find_nearest(arr, target_value):
@@ -557,11 +555,3 @@ for i in range(0, len(R_bnd)):
 
 namelist.write( "/"+"\n")
 namelist.close()
-
-
-#fig = plt.figure()
-#ax = fig.add_subplot(111)
-#ax.plot(R_bnd,Z_bnd)
-#cax = ax.pcolor(R_2d,Z_2d,psi_2d, cmap='rainbow')
-#cbar = fig.colorbar(cax)
-#plt.show()
