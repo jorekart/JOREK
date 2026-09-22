@@ -2200,7 +2200,7 @@ do i=1,n_vertex_max
 
                rhs_ij_k(var_rhoimp) =  & 
                                 ! The new diffusion scheme for the impurities
-                    - (D_par_local_imp-D_prof_imp) * BigR / BB2 * Bgrad_rho_k_star * (Bgrad_rhoimp)             * xjac * tstep * factor(var_rhoimp,1)&
+                    - ((D_par_local_imp+D_par_imp_sc_num*tau_sc)-D_prof_imp) * BigR / BB2 * Bgrad_rho_k_star * (Bgrad_rhoimp)             * xjac * tstep * factor(var_rhoimp,1)&
                     - D_prof_imp * BigR  * (            v_p * rimp0_p /BigR**2)                             * xjac * tstep * factor(var_rhoimp,2)&
                     
                     - tgnum_rhoimp * 0.25d0 / BigR * vpar0**2                                     &

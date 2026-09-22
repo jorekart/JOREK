@@ -167,52 +167,6 @@ report difference.
 
 ---
 
-## Finding 10 — the impurity parallel diffusivity loses its shock-capturing part in the toroidal channel
-
-**Where:** `rhs_ij_k(var_rhoimp)`.
-
-**What happens:** the parallel impurity diffusion term of the impurity-density
-residual is split between the two FFT channels. The poloidal channel uses the
-full diffusivity,
-
-```fortran
-rhs_ij(var_rhoimp) = &
-    - ((D_par_local_imp+D_par_imp_sc_num*tau_sc)-D_prof_imp) * BigR / BB2 * Bgrad_rho_star   * (Bgrad_rhoimp) * xjac * tstep * factor(var_rhoimp,1) &
-```
-
-while the toroidal channel drops the shock-capturing contribution
-`D_par_imp_sc_num*tau_sc`:
-
-```fortran
-rhs_ij_k(var_rhoimp) = &
-    - (D_par_local_imp-D_prof_imp)                          * BigR / BB2 * Bgrad_rho_k_star * (Bgrad_rhoimp) * xjac * tstep * factor(var_rhoimp,1) &
-```
-
-Two other places in the same routine write the same physics with the full
-coefficient, which is what makes this a slip rather than a convention:
-
-* the density equation splits the identical impurity term across the same two
-  channels and keeps `D_par_imp_sc_num*tau_sc` in both
-  (`rhs_ij_k(var_rho)`);
-* all three toroidal Jacobian blocks of the impurity equation —
-  `amat_k(var_rhoimp,var_psi)`, `amat_k(var_rhoimp,var_rhoimp)` and
-  `amat_kn(var_rhoimp,var_rhoimp)` — use the full coefficient, so the
-  tangent does not differentiate the residual it belongs to.
-
-**Suggested fix:** replace `(D_par_local_imp-D_prof_imp)` by
-`((D_par_local_imp+D_par_imp_sc_num*tau_sc)-D_prof_imp)` in
-`rhs_ij_k(var_rhoimp)`.
-
-**Effect:** unlike findings 1, 2, 4, 5, 7 and 8, this one is in the residual,
-so it changes the converged solution and not only the Newton convergence: with
-shock capturing active (`tau_sc /= 0`) the toroidal part of the parallel
-impurity diffusion is under-resolved relative to the poloidal part. It also
-makes the impurity Jacobian inconsistent with its own residual.
-
-**Scale:** 3 monomials, in each temperature branch.
-
----
-
 ## Finding 11 — the tgnum_Ti poloidal-velocity tangent is a factor BigR too small
 
 **Where:** `amat(var_Ti,var_u)`, `amat(var_Ti,var_rho)`, `amat(var_Ti,var_Ti)`
