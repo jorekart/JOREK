@@ -167,51 +167,6 @@ report difference.
 
 ---
 
-## Finding 11 — the tgnum_Ti poloidal-velocity tangent is a factor BigR too small
-
-**Where:** `amat(var_Ti,var_u)`, `amat(var_Ti,var_rho)`, `amat(var_Ti,var_Ti)`
-and `amat(var_Ti,var_rhoimp)`, and the same four columns of the electron
-energy equation with `tgnum_Te` and of the single-temperature one with
-`tgnum_T`.
-
-**What happens:** the first Taylor-Galerkin term of the ion energy residual
-carries `BigR**3`,
-
-```fortran
-- tgnum_Ti* 0.25d0 * BigR**3 * Ti0 * ((r0_x+alpha_i*rimp0_x)*u0_y - (r0_y+alpha_i*rimp0_y)*u0_x) &
-                   * ( v_x * u0_y - v_y * u0_x) * xjac * tstep * tstep * factor(var_Ti,8) &
-- tgnum_Ti* 0.25d0 * BigR**3 * (r0+alpha_i*rimp0) * (Ti0_x * u0_y - Ti0_y * u0_x)                &
-                   * ( v_x * u0_y - v_y * u0_x) * xjac * tstep * tstep * factor(var_Ti,8) &
-```
-
-but every one of its tangents carries `BigR**2`, for example
-
-```fortran
-amat(var_Ti,var_u) = ... &
-   + tgnum_Ti* 0.25d0 * BigR**2 * Ti0* ((r0_x+alpha_i*rimp0_x) * u_y - (r0_y+alpha_i*rimp0_y) * u_x) &
-                      * ( v_x * u0_y - v_y * u0_x) * xjac * theta*tstep*tstep &
-```
-
-The check is exact: every source line of the four affected blocks becomes its
-generated counterpart under the single substitution `BigR**2 -> BigR**3`, and
-nothing else differs.
-
-The density equation writes the same Taylor-Galerkin structure with
-`tgnum_rho` and uses `BigR**3` in its residual *and* in all of its tangents
-(`amat(var_rho,var_u)`, `amat(var_rho,var_rho)`), which fixes the intended
-power. The second `tgnum_Ti` group, the one carrying `1/BigR * vpar0**2`, is
-consistent between residual and tangents.
-
-**Suggested fix:** replace `BigR**2` by `BigR**3` in the ten `tgnum_Ti`
-poloidal-velocity tangent terms of the four blocks listed above.
-
-**Scale:** 24 monomials in `amat(var_Ti,var_u)`, 16 in `amat(var_Ti,var_Ti)`,
-8 in `amat(var_Ti,var_rho)` and 8 in `amat(var_Ti,var_rhoimp)`; 24, 20, 8 and
-8 in the corresponding `var_Te` blocks; 36, 28, 8 and 16 in the `var_T`
-blocks.
-
----
-
 ## Finding 12 — three smaller omissions in the energy tangents
 
 All three are terms the generator produces and `mod_elt_matrix_fft.f90` does
