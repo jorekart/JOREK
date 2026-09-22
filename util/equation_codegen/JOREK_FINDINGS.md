@@ -101,34 +101,6 @@ than hidden inside a work value.
 
 ---
 
-## Finding 7 — BB2 is not differentiated in the tgnum_vpar tangent
-
-**Where:** `amat(var_vpar,var_psi)` and `amat_k(var_vpar,var_psi)`.
-
-**What happens:** all three Taylor-Galerkin terms of the parallel-velocity
-residual carry the factor `BB2`, for example
-
-```fortran
-- tgnum_vpar * 0.25d0 * r0 * Vpar0**2 * BB2                                             &
-          * (-(ps0_s*vpar0_t - ps0_t*vpar0_s)/xjac + F0/BigR*vpar0_p) / BigR            &
-          * (-(ps0_s*v_t     - ps0_t*v_s)    /xjac)  * xjac * tstep * tstep
-```
-
-`BB2` depends on the poloidal flux, and the element routine differentiates it
-everywhere else in this equation (the `BB2_psi` terms of the inertia, source
-and kinetic-coupling contributions). The `tgnum_vpar` flux tangent, however,
-varies only the two poloidal brackets: every one of its six terms still
-carries `BB2`, never `BB2_psi`.
-
-**Suggested fix:** add, for each of the three residual terms, the
-corresponding `BB2 -> BB2_psi` copy to `amat(var_vpar,var_psi)` and
-`amat_k(var_vpar,var_psi)`.
-
-**Scale:** 84 residual monomials in `amat(var_vpar,var_psi)` and 20 in
-`amat_k(var_vpar,var_psi)`, in each temperature branch.
-
----
-
 ## Finding 9 — the parallel-velocity inward-pinch tangent has the wrong sign
 
 **Where:** `amat(var_vpar,var_rho)` and `amat(var_vpar,var_vpar)`.

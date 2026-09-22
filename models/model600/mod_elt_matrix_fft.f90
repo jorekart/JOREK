@@ -2920,27 +2920,54 @@ do i=1,n_vertex_max
                               + tgnum_vpar * 0.25d0 * r0 * Vpar0**2 * BB2 &
                                         * (-(ps0_s * vpar0_t - ps0_t * vpar0_s)/xjac) / BigR  &
                                         * (-(psi_s * v_t     - psi_t * v_s)    /xjac)  * xjac * theta * tstep*tstep &
-  
+
                               + tgnum_vpar * 0.25d0 * r0 * Vpar0**2 * BB2 &
                                         * (-(psi_s * vpar0_t - psi_t * vpar0_s)/xjac) / BigR  &
                                         * (-(ps0_s * v_t     - ps0_t * v_s)    /xjac)  * xjac * theta * tstep*tstep &
-  
+                               ! d/dpsi of the F0/BigR*vpar0_p piece of Bgrad_vpar times the unvaried v-bracket
+                              + tgnum_vpar * 0.25d0 * r0 * Vpar0**2 * BB2 &
+                                        * (F0 / BigR * vpar0_p) / BigR  &
+                                        * (-(psi_s * v_t     - psi_t * v_s)    /xjac)  * xjac * theta * tstep*tstep &
+
                               + tgnum_vpar * 0.25d0 * v  * Vpar0**2 * BB2 * (1.d0 - fact_conservative_u) &
                                         * (-(ps0_s * vpar0_t - ps0_t * vpar0_s)/xjac) / BigR  &
                                         * (-(psi_s * r0_t    - psi_t * r0_s)   /xjac)  * xjac * theta * tstep*tstep &
-  
+                               ! d/dpsi of the Bgrad_rho bracket times the unvaried F0/BigR*vpar0_p piece of Bgrad_vpar
+                              + tgnum_vpar * 0.25d0 * v  * Vpar0**2 * BB2 * (1.d0 - fact_conservative_u) &
+                                        * (F0 / BigR * vpar0_p) / BigR  &
+                                        * (-(psi_s * r0_t    - psi_t * r0_s)   /xjac)  * xjac * theta * tstep*tstep &
+
                               + tgnum_vpar * 0.25d0 * v  * Vpar0**2 * BB2 * (1.d0 - fact_conservative_u) &
                                         * (-(psi_s * vpar0_t - psi_t * vpar0_s)/xjac) / BigR  &
-                                        * (-(ps0_s * r0_t    - ps0_t * r0_s)   /xjac)  * xjac * theta * tstep*tstep & 
+                                        * (-(ps0_s * r0_t    - ps0_t * r0_s)   /xjac)  * xjac * theta * tstep*tstep &
+                               ! d/dpsi of the unvaried Bgrad_vpar bracket times the F0/BigR*r0_p piece of Bgrad_rho
+                              + tgnum_vpar * 0.25d0 * v  * Vpar0**2 * BB2 * (1.d0 - fact_conservative_u) &
+                                        * (-(psi_s * vpar0_t - psi_t * vpar0_s)/xjac) / BigR  &
+                                        * (F0 / BigR * r0_p)     * xjac * theta * tstep*tstep &
 
 !=============================== New TG_num terms==================================
                                + tgnum_vpar * 0.25d0 * vpar0 * Vpar0**2 * BB2 * fact_conservative_u &
                                          * (-(ps0_s * r0_t - ps0_t * r0_s)/xjac) / BigR  &
                                          * (-(psi_s * v_t     - psi_t * v_s)    /xjac) * xjac * theta * tstep*tstep &
+                               ! d/dpsi of the unvaried v-bracket times the F0/BigR*r0_p piece of Bgrad_rho
+                               + tgnum_vpar * 0.25d0 * vpar0 * Vpar0**2 * BB2 * fact_conservative_u &
+                                         * (F0 / BigR * r0_p) / BigR  &
+                                         * (-(psi_s * v_t     - psi_t * v_s)    /xjac) * xjac * theta * tstep*tstep &
         
                                + tgnum_vpar * 0.25d0 * vpar0 * Vpar0**2 * BB2 * fact_conservative_u &
                                          * (-(psi_s * r0_t - psi_t * r0_s)/xjac) / BigR  &
-                                         * (-(ps0_s * v_t     - ps0_t * v_s)    /xjac) * xjac * theta * tstep*tstep
+                                         * (-(ps0_s * v_t     - ps0_t * v_s)    /xjac) * xjac * theta * tstep*tstep &
+
+                               ! BB2 -> BB2_psi copies of the three tgnum_vpar residual terms (see finding 7)
+                               + tgnum_vpar * 0.25d0 * r0 * Vpar0**2 * BB2_psi &
+                                         * (-(ps0_s * vpar0_t - ps0_t * vpar0_s)/xjac + F0 / BigR * vpar0_p) / BigR  &
+                                         * (-(ps0_s * v_t     - ps0_t * v_s)    /xjac)  * xjac * theta * tstep*tstep &
+                               + tgnum_vpar * 0.25d0 * v  * Vpar0**2 * BB2_psi * (1.d0 - fact_conservative_u) &
+                                         * (-(ps0_s * vpar0_t - ps0_t * vpar0_s)/xjac + F0 / BigR * vpar0_p) / BigR  &
+                                         * (-(ps0_s * r0_t    - ps0_t * r0_s)   /xjac + F0 / BigR * r0_p)     * xjac * theta * tstep*tstep &
+                               + tgnum_vpar * 0.25d0 * vpar0 * Vpar0**2 * BB2_psi * fact_conservative_u &
+                                         * (-(ps0_s * r0_t - ps0_t * r0_s)/xjac + F0 / BigR * r0_p) / BigR  &
+                                         * (-(ps0_s * v_t     - ps0_t * v_s)    /xjac)  * xjac * theta * tstep*tstep
 !===============================End of new TG_num terms============================
   
                     if (normalized_velocity_profile) then
@@ -2951,7 +2978,23 @@ do i=1,n_vertex_max
   
                     amat_k(var_vpar,var_psi) = - 0.5d0 * r0 * vpar0**2 * BB2_psi * F0 / BigR * v_p                                          * xjac * theta * tstep &
                                                - visco_par_par * F0**2 / (BigR * BB2**2) * BB2_psi * Bgrad_vpar * Bgrad_rho_k_star          * xjac * theta * tstep &
-                                               + visco_par_par * F0**2 / (BigR * BB2)          * Bgrad_vpar_psi * Bgrad_rho_k_star          * xjac * theta * tstep  
+                                               + visco_par_par * F0**2 / (BigR * BB2)          * Bgrad_vpar_psi * Bgrad_rho_k_star          * xjac * theta * tstep &
+                                               ! BB2 -> BB2_psi copies of the two rhs_ij_k tgnum_vpar terms (see finding 7)
+                                               + tgnum_vpar * 0.25d0 * r0 * Vpar0**2 * BB2_psi &
+                                                         * (-(ps0_s * vpar0_t - ps0_t * vpar0_s)/xjac + F0 / BigR * vpar0_p) / BigR  &
+                                                         * (F0 / BigR * v_p)  * xjac * theta * tstep*tstep &
+                                               + tgnum_vpar * 0.25d0 * vpar0 * Vpar0**2 * BB2_psi * fact_conservative_u &
+                                                         * (-(ps0_s * r0_t - ps0_t * r0_s)/xjac + F0 / BigR * r0_p) / BigR  &
+                                                         * (F0 / BigR * v_p)  * xjac * theta * tstep*tstep &
+                                               ! Bracket differentiation of the two rhs_ij_k tgnum_vpar terms (see finding 7):
+                                               ! the k-channel v-factor F0/BigR*v_p has no ps0 dependence, so only
+                                               ! d(Bgrad_vpar)/dpsi (resp. d(Bgrad_rho)/dpsi) times it is needed.
+                                               + tgnum_vpar * 0.25d0 * r0 * Vpar0**2 * BB2 &
+                                                         * (-(psi_s * vpar0_t - psi_t * vpar0_s)/xjac) / BigR  &
+                                                         * (F0 / BigR * v_p)  * xjac * theta * tstep*tstep &
+                                               + tgnum_vpar * 0.25d0 * vpar0 * Vpar0**2 * BB2 * fact_conservative_u &
+                                                         * (-(psi_s * r0_t - psi_t * r0_s)/xjac) / BigR  &
+                                                         * (F0 / BigR * v_p)  * xjac * theta * tstep*tstep
                     amat(var_vpar,var_u) = 0.d0         
                     
                     !---------------------------------------- NEO
