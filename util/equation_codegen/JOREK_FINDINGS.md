@@ -139,40 +139,6 @@ report difference.
 
 ---
 
-## Finding 16 — the single-temperature parallel convection uses the neutral density
-
-**Where:** `rhs_ij(var_T)`, the parallel convection of the total pressure.
-
-**What happens:** the poloidal half of the parallel pressure convection is
-written with `rn0`, the neutral density, where every analogous line uses
-`rimp0`:
-
-```fortran
-! rhs_ij(var_T), line ~2013
-- v * (r0 + rn0  *alpha_imp_bis) * Vpar0 * (T0_s  * ps0_t - T0_t  * ps0_s) * tstep * factor(var_T,4 ) &
-
-! the toroidal half of the same term, one line above
-- v * (r0 + rimp0*alpha_imp_bis) * F0 / BigR * Vpar0 * T0_p         * xjac * tstep * factor(var_T,4 ) &
-
-! the same line in the two-temperature equations
-- v * (r0 + rimp0*alpha_i)     * Vpar0 * (Ti0_s * ps0_t - Ti0_t * ps0_s)   * tstep * factor(var_Ti,4) &
-- v * (r0 + rimp0*alpha_e_bis) * Vpar0 * (Te0_s * ps0_t - Te0_t * ps0_s)   * tstep * factor(var_Te,4) &
-```
-
-`alpha_imp_bis` is the impurity closure coefficient, so pairing it with the
-neutral density has no physical reading; the toroidal half of the very same
-term, and both two-temperature equations, use `rimp0`.
-
-**Suggested fix:** `rn0 -> rimp0`.
-
-**Effect:** this is in the residual, so like finding 10 it changes the
-converged solution, not only the Newton convergence — whenever neutrals and
-impurities are both present and their densities differ.
-
-**Scale:** 4 monomials.
-
----
-
 ## Finding 17 — amat_n(var_T,var_vpar) drops the impurity pressure
 
 **Where:** `amat_n(var_T,var_vpar)`.
