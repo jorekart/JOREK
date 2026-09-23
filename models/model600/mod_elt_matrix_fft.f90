@@ -3326,6 +3326,7 @@ do i=1,n_vertex_max
                               - v * ((GAMMA - 1.) / BigR) * vpar0**2 * (psi_x * ps0_x + psi_y * ps0_y)&
                                   * (particle_source(ms,mt) + source_pellet + source_bg_drift + source_imp_drift)                                     * xjac * theta * tstep &
                               !==============================End of friction terms=================
+                              - v * ((GAMMA - 1.) / BigR) * vpar0**2 * (psi_x * ps0_x + psi_y * ps0_y) * aux_rho0     * xjac * theta * tstep &
  
                            + tgnum_Ti* 0.25d0 / BigR * vpar0**2                                                         &
                                      * Ti0 * ((r0_x+alpha_i*rimp0_x) * psi_y - (r0_y+alpha_i*rimp0_y) * psi_x)                                              &
@@ -3431,7 +3432,10 @@ do i=1,n_vertex_max
                                      * (                            + F0 / BigR * v_p) * xjac * theta * tstep * tstep &
                                 + tgnum_Ti* 0.25d0 / BigR * vpar0**2                                                  &
                                      * rho * (Ti0_x * ps0_y - Ti0_y * ps0_x + F0 / BigR * Ti0_p)                      &
-                                     * (                            + F0 / BigR * v_p) * xjac * theta * tstep * tstep
+                                     * (                            + F0 / BigR * v_p) * xjac * theta * tstep * tstep &
+                                
+                                - dZKi_prof_drho * rho * BigR / BB2 * Bgrad_T_k_star * Bgrad_Ti          * xjac * theta * tstep &
+                                + dZKi_prof_drho * rho * BigR * (v_p * Ti0_p / BigR**2)                  * xjac * theta * tstep
   
                     amat_kn(var_Ti,var_rho) = + tgnum_Ti* 0.25d0 / BigR * vpar0**2                 &
                                      * Ti0 * (+ F0 / BigR * rho_p)                      &
@@ -3564,8 +3568,9 @@ do i=1,n_vertex_max
                                           - v * BigR * ((GAMMA - 1.)/2.) * vpar0**2 * BB2 &
                                               * (rimp0*dalpha_e_dT*rn0*Sion_T)    * Te * xjac * theta * tstep &
                                           - v * BigR * ((GAMMA - 1.)/2.) * vv2 &
-                                              * (rimp0*dalpha_e_dT*rn0*Sion_T)    * Te * xjac * theta * tstep
+                                              * (rimp0*dalpha_e_dT*rn0*Sion_T)    * Te * xjac * theta * tstep &
                     !==============================End of friction terms=================
+                                          + v * BigR * Ti0 * r0_corr * r0_corr * dSrec_dT * Te     * xjac * theta * tstep
 
                     if (with_neutrals) then
                       !===================== Additional terms from friction terms============
@@ -3791,7 +3796,10 @@ do i=1,n_vertex_max
                                      * (                            + F0 / BigR * v_p) * xjac * theta * tstep * tstep &
                                 + tgnum_Te * 0.25d0 / BigR * vpar0**2                                                  &
                                      * rho * (Te0_x * ps0_y - Te0_y * ps0_x + F0 / BigR * Te0_p)                      &
-                                     * (                            + F0 / BigR * v_p) * xjac * theta * tstep * tstep
+                                     * (                            + F0 / BigR * v_p) * xjac * theta * tstep * tstep &
+
+                                - dZKe_prof_drho * rho * BigR / BB2 * Bgrad_T_k_star * Bgrad_Te          * xjac * theta * tstep &
+                                + dZKe_prof_drho * rho * BigR * (v_p * Te0_p / BigR**2)                  * xjac * theta * tstep
   
                     amat_kn(var_Te,var_rho) = &
                     !=============== The ionization potential energy term=========================
@@ -4091,6 +4099,7 @@ do i=1,n_vertex_max
                                           - v * ((GAMMA - 1.) / BigR) * vpar0**2 * (psi_x * ps0_x + psi_y * ps0_y)&
                                               * ((r0+alpha_e*rimp0)*rn0*Sion_T + particle_source(ms,mt) + source_pellet + source_bg_drift + source_imp_drift) * xjac * theta * tstep &
                     !==============================End of friction terms=================
+                                          - v * ((GAMMA - 1.) / BigR) * vpar0**2 * (psi_x * ps0_x + psi_y * ps0_y) * aux_rho0     * xjac * theta * tstep &
   
                           + tgnum_T * 0.25d0 / BigR * vpar0**2                                                        &
                                     * T0 * ((r0_x+alpha_imp*rimp0_x) * psi_y - (r0_y+alpha_imp*rimp0_y) * psi_x)                                              &
@@ -4238,8 +4247,11 @@ do i=1,n_vertex_max
                                     * (                            + F0 / BigR * v_p)  * xjac * theta * tstep * tstep &
                           + tgnum_T * 0.25d0 / BigR * vpar0**2                                                        &
                                     * rho * (T0_x * ps0_y - T0_y * ps0_x + F0 / BigR * T0_p)                          &
-                                    * (                            + F0 / BigR * v_p)  * xjac * theta * tstep * tstep
-  
+                                    * (                            + F0 / BigR * v_p)  * xjac * theta * tstep * tstep &
+
+                          - dZK_prof_drho * rho * BigR / BB2 * Bgrad_T_k_star * Bgrad_T           * xjac * theta * tstep &
+                          + dZK_prof_drho * rho * BigR * (v_p * T0_p / BigR**2)                   * xjac * theta * tstep
+
                     amat_kn(var_T,var_rho) =                                                                          &
                     !=============== The ionization potential energy term=========================
                           ! New diffusive ionization energy flux term
