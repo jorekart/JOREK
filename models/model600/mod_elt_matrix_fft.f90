@@ -3826,6 +3826,13 @@ do i=1,n_vertex_max
                               + (GAMMA - 1.) * dE_ion_dT * Te * ((D_par_local_imp+D_par_imp_sc_num*tau_sc)-D_prof_imp) * BigR / BB2 * Bgrad_rho_star * (Bgrad_rhoimp) * xjac * theta * tstep &
                               + (GAMMA - 1.) * dE_ion_dT * Te * D_prof_imp * BigR  * (v_x*(rimp0_x) + v_y*(rimp0_y)                                           ) * xjac * theta * tstep &
                     !================= End ionization potential energy ===========================
+                              ! E_ion -> dE_ion_dT*Te copies of the compression and parallel-flow terms
+                              - (GAMMA-1.) * v * dE_ion_dT * Te * BigR**2 * (rimp0_s * u0_t - rimp0_t * u0_s)          * theta * tstep &
+                              + (GAMMA-1.) * v * dE_ion_dT * Te * F0 / BigR * Vpar0 * rimp0_p                   * xjac * theta * tstep &
+                              + (GAMMA-1.) * v * dE_ion_dT * Te * Vpar0 * (rimp0_s * ps0_t - rimp0_t * ps0_s)          * theta * tstep &
+                              - (GAMMA-1.) * v * dE_ion_dT * Te * rimp0 * 2.d0 * BigR * u0_y                    * xjac * theta * tstep &
+                              + (GAMMA-1.) * v * dE_ion_dT * Te * rimp0 * (vpar0_s * ps0_t - vpar0_t * ps0_s)          * theta * tstep &
+                              + (GAMMA-1.) * v * dE_ion_dT * Te * rimp0 * F0 / BigR * vpar0_p                   * xjac * theta * tstep &
                               - v * (r0 + rimp0 * alpha_e_bis) * BigR**2  * (Te_s * u0_t - Te_t  * u0_s) * theta * tstep &
                               - v * (rimp0 * alpha_e_tri) * Te * BigR**2 * (Te0_s* u0_t - Te0_t * u0_s)  * theta * tstep &
                               - v * Te  * BigR**2 * ( r0_s * u0_t - r0_t * u0_s)                         * theta * tstep &
@@ -3964,7 +3971,7 @@ do i=1,n_vertex_max
                     end if ! (with_vpar)
                     if (with_neutrals) then
                       amat(var_Te,var_rhon) = + v * BigR * (r0 + rimp0 * alpha_e) * rhon * ksi_ion_norm * Sion_T * xjac * theta * tstep &
-                                              + v * BigR * rhon * (r0 + rimp0 * alpha_e) * LradDrays_T     * xjac * theta * tstep 
+                                              + v * BigR * rhon * (r0_corr + rimp0_corr * alpha_e) * LradDrays_T     * xjac * theta * tstep
                     endif
                     if (with_impurities) then
                       amat(var_Te,var_rhoimp) = v * rhoimp * alpha_e * Te0 * BigR * xjac * (1.d0 + zeta)          &
@@ -4019,7 +4026,13 @@ do i=1,n_vertex_max
      
                             ! Energy exchange term
                             - v * BigR * ddTe_i_drhoimp * rhoimp                                * xjac * theta * tstep &
-     
+
+                            ! Ionization sink and line/continuum radiation, alpha_e dependence on rhoimp
+                            + v * BigR * ksi_ion_norm * alpha_e * rn0 * Sion_T * rhoimp                  * xjac * theta * tstep &
+                            + v * BigR * alpha_e * rn0_corr * LradDrays_T * rhoimp                       * xjac * theta * tstep &
+                            + v * BigR * alpha_e * (r0_corr-rimp0_corr) * LradDcont_corr * rhoimp        * xjac * theta * tstep &
+                            - v * BigR * (r0_corr+alpha_e*rimp0_corr) * LradDcont_corr * rhoimp          * xjac * theta * tstep &
+
                             + v * BigR * rhoimp * (r0_corr + 2.*alpha_e*rimp0_corr) * Lrad      * xjac * theta * tstep &
                             + v * BigR * rhoimp * alpha_e * frad_bg                             * xjac * theta * tstep
 
@@ -4277,6 +4290,13 @@ do i=1,n_vertex_max
                           + (GAMMA - 1.) * dE_ion_dT * T * D_prof_imp * BigR  * (v_x*(rimp0_x) + v_y*(rimp0_y)                                               ) * xjac * theta * tstep &
 
                     !================= End ionization potential energy ===========================
+                          ! E_ion -> dE_ion_dT*T copies of the compression and parallel-flow terms
+                          - (GAMMA-1.) * v * dE_ion_dT * T * BigR**2 * (rimp0_s * u0_t - rimp0_t * u0_s)          * theta * tstep &
+                          + (GAMMA-1.) * v * dE_ion_dT * T * F0 / BigR * Vpar0 * rimp0_p                   * xjac * theta * tstep &
+                          + (GAMMA-1.) * v * dE_ion_dT * T * Vpar0 * (rimp0_s * ps0_t - rimp0_t * ps0_s)          * theta * tstep &
+                          - (GAMMA-1.) * v * dE_ion_dT * T * rimp0 * 2.d0 * BigR * u0_y                    * xjac * theta * tstep &
+                          + (GAMMA-1.) * v * dE_ion_dT * T * rimp0 * (vpar0_s * ps0_t - vpar0_t * ps0_s)          * theta * tstep &
+                          + (GAMMA-1.) * v * dE_ion_dT * T * rimp0 * F0 / BigR * vpar0_p                   * xjac * theta * tstep &
                                       - v * (r0 + rimp0 * alpha_imp_bis) * BigR**2 * ( T_s  * u0_t - T_t  * u0_s) * theta * tstep &
                                       - v * (rimp0 * alpha_imp_tri) * T  * BigR**2 * ( T0_s * u0_t - T0_t * u0_s) * theta * tstep &
                                       - v * T  * BigR**2 * ( r0_s * u0_t - r0_t * u0_s)                           * theta * tstep &
@@ -4321,6 +4341,11 @@ do i=1,n_vertex_max
                                           * ((r0+alpha_e*rimp0)*rn0*dSion_dT) * T * xjac * theta * tstep &
                                       - v * BigR * ((GAMMA - 1.)/2.) * vv2 &
                                           * ((r0+alpha_e*rimp0)*rn0*dSion_dT) * T * xjac * theta * tstep &
+                                      ! alpha_e temperature dependence of the friction source
+                                      - v * BigR * ((GAMMA - 1.)/2.) * vpar0**2 * BB2 &
+                                          * (dalpha_e_dT*rimp0*rn0*Sion_T) * T * xjac * theta * tstep &
+                                      - v * BigR * ((GAMMA - 1.)/2.) * vv2 &
+                                          * (dalpha_e_dT*rimp0*rn0*Sion_T) * T * xjac * theta * tstep &
                     !==============================End of friction terms=================
                                       + (GAMMA-1.) * v * BigR**2.d0 * ( u0_x * w0_x + u0_y * w0_y) * dvisco_dT_heating * T * visco_fact_old  * BigR * xjac * theta * tstep &
                                       + (GAMMA-1.) * v * 2.d0 * BigR * w0 *  u0_x                  * dvisco_dT_heating * T * visco_fact_new  * BigR * xjac * theta * tstep &
@@ -4500,6 +4525,20 @@ do i=1,n_vertex_max
                      - v * alpha_imp * rhoimp * 2.d0* GAMMA * BigR * T0 * u0_y                   * xjac * theta * tstep &
                      + v * alpha_imp * rhoimp * GAMMA * T0 * (vpar0_s * ps0_t - vpar0_t * ps0_s)        * theta * tstep &
                      + v * alpha_imp * rhoimp * GAMMA * T0 * F0 / BigR * vpar0_p                 * xjac * theta * tstep &
+
+                    !===================== Additional terms from friction terms============
+                                      ! alpha_e rhoimp dependence of the friction source
+                                      - v * BigR * ((GAMMA - 1.)/2.) * vpar0**2 * BB2 &
+                                          * (alpha_e*rn0*Sion_T) * rhoimp * xjac * theta * tstep &
+                                      - v * BigR * ((GAMMA - 1.)/2.) * vv2 &
+                                          * (alpha_e*rn0*Sion_T) * rhoimp * xjac * theta * tstep &
+                    !==============================End of friction terms=================
+
+                     ! Ionization sink and line/continuum radiation, alpha_e dependence on rhoim
+                     + v * BigR * ksi_ion_norm * alpha_e * rn0 * Sion_T * rhoimp                  * xjac * theta * tstep &
+                     + v * BigR * alpha_e * rn0_corr * LradDrays_T * rhoimp                       * xjac * theta * tstep &
+                     + v * BigR * alpha_e * (r0_corr-rimp0_corr) * LradDcont_corr * rhoimp        * xjac * theta * tstep &
+                     - v * BigR * (r0_corr+alpha_e*rimp0_corr) * LradDcont_corr * rhoimp          * xjac * theta * tstep &
 
                      + v * BigR * rhoimp * (r0_corr + 2*alpha_e*rimp0_corr) * Lrad * xjac * theta * tstep &
                      + v * BigR * rhoimp * alpha_e * frad_bg                     * xjac * theta * tstep
