@@ -139,33 +139,6 @@ report difference.
 
 ---
 
-## Finding 17 — amat_n(var_T,var_vpar) drops the impurity pressure
-
-**Where:** `amat_n(var_T,var_vpar)`.
-
-**What happens:** the residual convects the full pressure along the field,
-
-```fortran
-- v * (r0 + rimp0*alpha_imp) * T0 * GAMMA * F0 / BigR * vpar0_p * xjac * tstep * factor(var_T,3 ) &
-```
-
-but its toroidal parallel-velocity tangent keeps only the main-ion part:
-
-```fortran
-amat_n(var_T,var_vpar) = + v * r0 * GAMMA * T0 * F0 / BigR * vpar_p * xjac * theta * tstep &
-```
-
-Both two-temperature equations get this right —
-`amat_n(var_Ti,var_vpar)` uses `(r0+rimp0*alpha_i)` and
-`amat_n(var_Te,var_vpar)` uses `(r0+rimp0*alpha_e)` — which is what makes the
-single-temperature one a slip rather than a convention.
-
-**Suggested fix:** `r0 -> (r0 + rimp0*alpha_imp)`.
-
-**Scale:** 2 monomials.
-
----
-
 ## Complete inventory
 
 Every report line that is blank on one side, across all 233 blocks, belongs to

@@ -4458,7 +4458,7 @@ do i=1,n_vertex_max
                                     * (r0+alpha_imp_bis*rimp0) * (T0_x * ps0_y - T0_y * ps0_x + F0 / BigR * T0_p)                           &
                                     * (                            + F0 / BigR * v_p)  * xjac * theta * tstep * tstep 
     
-                      amat_n(var_T,var_vpar) = + v * r0 * GAMMA * T0 * F0 / BigR * vpar_p          * xjac * theta * tstep &
+                      amat_n(var_T,var_vpar) = + v * (r0 + rimp0*alpha_imp) * GAMMA * T0 * F0 / BigR * vpar_p          * xjac * theta * tstep &
                       !=============== The ionization potential energy term=========================
                           + (GAMMA - 1.) * v * E_ion * rimp0 * F0 / BigR * vpar_p               * xjac * theta * tstep  &
                           + (GAMMA - 1.) * v * E_ion_bg * (r0-rimp0) * F0 / BigR * vpar_p       * xjac * theta * tstep
