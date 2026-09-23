@@ -30,16 +30,22 @@ differentiated one becomes a trial function.
 
 ## Setup and tests
 
+The only dependency is `sympy`. No package install is needed, because the
+scripts add `src/` to `sys.path` themselves. On the ITER cluster:
+
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -e .
-.venv/bin/python -m unittest discover -s tests -v
+module load sympy/1.14.0-gfbf-2025b
+python3 -m unittest discover -s tests -v
 ```
+
+Any other Python with `sympy` works too, for example a virtual environment
+with `pip install sympy`. `run_test.sh` tries these in order: the system
+Python, then `module load`, then a local `.venv`.
 
 ## Model 199
 
 ```bash
-.venv/bin/python examples/check_model199.py
+python3 examples/check_model199.py
 ```
 
 The comparison is symbolic rather than textual. A mismatch raises an error
@@ -52,14 +58,14 @@ algebraic difference.
 the `psi`, `u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`, `Ti`, `Te` and `T` rows:
 
 ```bash
-.venv/bin/python examples/export_model600_terms.py
+python3 examples/export_model600_terms.py
 meld reports/model600_fortran_terms.md reports/model600_generated_terms.md
 ```
 
 Repeat `--equation` to export fewer rows while developing one of them:
 
 ```bash
-.venv/bin/python examples/export_model600_terms.py --equation psi
+python3 examples/export_model600_terms.py --equation psi
 ```
 
 `Ti` and `Te` exist only in the two-temperature branch of the element routine
@@ -68,8 +74,8 @@ and `T` only in the other one, so each is exported into its own section.
 To compare the two reports block by block instead of line by line:
 
 ```bash
-.venv/bin/python examples/diff_model600_reports.py
-.venv/bin/python examples/diff_model600_reports.py --quiet   # verdicts only
+python3 examples/diff_model600_reports.py
+python3 examples/diff_model600_reports.py --quiet   # verdicts only
 ```
 
 Each assignment block is compared as a multiset of monomials, and a block that
@@ -142,62 +148,26 @@ reference, which usually explains the rest of the output.
 
 ## Known JOREK differences
 
-With the conventions above, all ten rows — `psi`, `u`, `zj`, `w`, `rho`,
-`vpar`, `rhoimp`, `Ti`, `Te` and `T` — are reproduced by the generator, and
-174 of the 233 exported assignment blocks are identical. The remaining 59 are
-terms the generator produces and the element
-routine does not, or coefficients that disagree. They are recorded, with their
-suggested Fortran fixes, in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
+With the conventions above, all ten rows (`psi`, `u`, `zj`, `w`, `rho`,
+`vpar`, `rhoimp`, `Ti`, `Te` and `T`) are reproduced by the generator. The
+first audit reported seventeen findings. Most have since been fixed in the
+Fortran, and every residual (`rhs_ij`) now agrees exactly. The 24 assignment
+blocks that still differ are all Jacobian tangents, and they fall into two
+groups, documented in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
 
-1. the impurity part of the ion pressure is not differentiated in the
-   diamagnetic terms of the momentum and density equations
-   (`amat(var_u,var_Ti)`, `amat(var_u,var_T)`, `amat(var_u,var_rhoimp)` and
-   the same three columns of `var_rho`);
-2. the impurity part of the electron pressure is not differentiated in the
-   induction equation (`amat(var_psi,var_Te)`, `amat_n(var_psi,var_Te)`,
-   `amat(var_psi,var_rhoimp)`, and an `amat_n(var_psi,var_rhoimp)` that the
-   element routine does not have at all);
-3. the one-temperature `amat(var_u,var_T)` diamagnetic-viscosity tangent is a
-   factor two too large;
-4. the density inward-pinch term is not differentiated with respect to `psi`
-   (`amat(var_rho,var_psi)`);
-5. the temperature dependence of `alpha_e` is not differentiated in the
-   density ionization/recombination sources (`amat(var_rho,var_Te)`,
-   `amat(var_rho,var_T)`), although the momentum equation does differentiate
-   it in the same sources;
-6. the parallel-velocity time term is linearized inconsistently: the `vpar`
-   column and the history keep only the toroidal part of `B**2`, and the
-   `psi` column carries half of its variation;
-7. `BB2` is not differentiated in the `tgnum_vpar` tangent
-   (`amat(var_vpar,var_psi)`, `amat_k(var_vpar,var_psi)`);
-8. the toroidal channel of the parallel-parallel viscosity tangent is missing
-   (`amat_n(var_vpar,var_vpar)`, `amat_kn(var_vpar,var_vpar)`);
-9. the parallel-velocity inward-pinch tangent repeats the sign of its own
-   residual instead of flipping it;
-10. the impurity parallel diffusivity loses its shock-capturing part
-    `D_par_imp_sc_num*tau_sc` in the toroidal channel of the residual
-    (`rhs_ij_k(var_rhoimp)`) — the only finding that affects the converged
-    solution rather than only the Newton tangent;
-11. the `tgnum_Ti` poloidal-velocity tangent carries `BigR**2` where its own
-    residual carries `BigR**3`, in all four of its columns;
-12. three smaller omissions in the ion energy tangents: the `BB2` flux
-    dependence of the kinetic-coupling term, the density derivative of the
-    perpendicular conductivity in the toroidal channel, and the electron
-    temperature dependence of the recombination rate;
-13. four ionization-energy tangent lines of `amat(var_Te,var_Te)` and
-    `amat_k(var_Te,var_Te)` are missing their `theta` factor, so those entries
-    are `1/theta` times too large;
-14. `amat(var_Te,var_Te)` uses `alpha_e` where `amat_k(var_Te,var_Te)` uses
-    `alpha_e_bis` for the same quantity, two lines apart;
-15. four omissions in the electron and total energy tangents: the temperature
-    dependence of six ionization-energy terms, uncorrected densities in
-    `amat(var_Te,var_rhon)`, three radiation/ionization derivatives in
-    `amat(var_Te,var_rhoimp)`, and `alpha_e` in the friction sources;
-16. `rhs_ij(var_T)` convects the pressure with the *neutral* density `rn0`
-    where every analogous line uses `rimp0` — the second finding that affects
-    the converged solution;
-17. `amat_n(var_T,var_vpar)` drops the impurity part of the pressure that both
-    two-temperature equations keep.
+- **Open, left to the pinch developer**:
+  - Finding 4: the density and parallel-velocity inward-pinch terms are not
+    differentiated with respect to `psi` (`amat(var_rho,var_psi)`,
+    `amat(var_vpar,var_psi)`).
+  - Finding 9: the parallel-velocity pinch tangent repeats the sign of its
+    own residual instead of flipping it (`amat(var_vpar,var_rho)`,
+    `amat(var_vpar,var_vpar)`).
+- **Accepted, not bugs**:
+  - Findings 1 and 2: the impurity parts of the ion and electron pressures
+    are not differentiated in the `tauIC` diamagnetic tangents of the `u`,
+    `rho` and `psi` equations.
+  - Model 600 does not support impurities together with `tauIC /= 0`, so
+    these terms never contribute in a supported run.
 
 A source monomial and its generated counterpart are aligned on the same report
 line even when only their numeric coefficient or their power of `BigR` differs, so a term the element

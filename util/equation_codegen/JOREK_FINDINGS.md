@@ -8,8 +8,8 @@ Every finding below was obtained by generating the two term reports and
 comparing them block by block:
 
 ```bash
-.venv/bin/python examples/export_model600_terms.py
-.venv/bin/python examples/diff_model600_reports.py
+python3 examples/export_model600_terms.py
+python3 examples/diff_model600_reports.py
 ```
 
 `diff_model600_reports.py` compares each `rhs_ij`/`amat` assignment as a
@@ -19,34 +19,39 @@ rewriting every `_s`/`_t` derivative through the chain rule, because the
 element routine spells the same poloidal bracket sometimes as
 `a_s*b_t - a_t*b_s` and sometimes as `xjac*(a_x*b_y - a_y*b_x)` — even between
 a residual and its own tangent.  A block whose two sides differ only by that
-rewrite is reported as `SAME`. At the time of writing, 174 of the
-233 exported blocks are identical; the remaining 59 are the seventeen findings
-below. Nothing in this list has been fixed in the Fortran.
+rewrite is reported as `SAME`.
 
-Status of the five exported rows:
+The original audit reported seventeen findings. Findings 3, 5–8 and 10–17
+have since been fixed in the Fortran (one commit per finding, `fix
+linearization: finding N, ...`), and their sections have been removed from
+this file. What is left disagrees in 24 blocks, for two reasons:
+
+- **Open: the inward pinch (findings 4 and 9).** These are real
+  inconsistencies in the Jacobian, but the pinch implementation as a whole
+  needs revisiting, so they are left to its developer rather than patched
+  here. They are described below.
+- **Accepted: tauIC with impurities (findings 1 and 2).** These terms only
+  exist when the diamagnetic terms (`tauIC /= 0`) and impurities are both
+  active, and that combination is not supported. They are kept in the
+  reference as known differences, not as bugs to fix. See the section below.
+
+Status of the exported rows:
 
 | Row | Residual | Jacobian |
 |---|---|---|
-| `psi` | reproduced | finding 2 |
-| `u` | reproduced | findings 1 and 3 |
+| `psi` | reproduced | finding 2 (tauIC × impurities only) |
+| `u` | reproduced | finding 1 (tauIC × impurities only) |
 | `zj` | reproduced | reproduced |
 | `w` | reproduced | reproduced |
-| `rho` | reproduced | findings 1, 4 and 5 |
-| `vpar` | findings 6 and 9 | findings 4, 6, 7, 8 and 9 |
-| `rhoimp` | finding 10 | reproduced |
-| `Ti` | reproduced | findings 11 and 12 |
-| `Te` | reproduced | findings 11, 12, 13, 14 and 15 |
-| `T` | finding 16 | findings 11, 12, 13, 14, 15 and 17 |
+| `rho` | reproduced | findings 1 (tauIC × impurities only) and 4 |
+| `vpar` | reproduced | findings 4 and 9 |
+| `rhoimp` | reproduced | reproduced |
+| `Ti` | reproduced | reproduced |
+| `Te` | reproduced | reproduced |
+| `T` | reproduced | reproduced |
 
-Every source term of every row is reproduced by the generator. Apart from
-findings 3, 6 and 9, the differences are all terms the generator produces and
-the element routine does not.
-
-Findings 3, 6, 9, 10, 11, 13, 14 and 16 are disagreements about a
-coefficient, a power of `BigR`, a sign, a missing `theta` or a wrong variable
-rather than omissions.  Findings 10 and 16 are the only two that sit in a
-residual rather than in a tangent, so they are the only two that change the
-converged solution.
+Every residual is now reproduced exactly, so none of the remaining differences
+changes the converged solution. They only affect the Newton tangent.
 
 The NEO branch is excluded from the default reports (`--include-neo` enables
 it) and has not been audited here.
@@ -139,40 +144,50 @@ report difference.
 
 ---
 
+## Accepted differences: tauIC with impurities (findings 1 and 2)
+
+The diamagnetic terms scale with `tauIC`. Their tangents are written for the
+main-ion and electron pressures `r0*Ti0` and `r0*Te0`, while the residuals use
+the full pressures `(r0 + rimp0*alpha_i)*Ti0` and `(r0 + rimp0*alpha_e)*Te0`.
+The generator therefore produces impurity-pressure terms that the element
+routine does not have:
+
+- **Finding 1**: the impurity ion pressure in the diamagnetic terms of the
+  momentum and density equations: `amat(var_u,var_Ti|T|rhoimp)` and
+  `amat(var_rho,var_Ti|T|rhoimp)`.
+- **Finding 2**: the impurity electron pressure in the diamagnetic coupling
+  of the induction equation: `amat(var_psi,var_Te|T|rhoimp)`,
+  `amat_n(var_psi,var_Te|T)`, and an `amat_n(var_psi,var_rhoimp)` that the
+  element routine does not assemble at all.
+
+Every one of these monomials carries both `tauIC` and an impurity factor
+(`rhoimp`, `rimp0` or its derivatives). Model 600 does not support running
+with impurities and `tauIC /= 0` at the same time, so the missing terms never
+contribute in a supported configuration. They are recorded in the reference as
+accepted differences, not bugs. The combination should be rejected at input
+time, but nothing in model 600 does this yet. If it ever becomes supported,
+these tangents must be completed first; the full derivation is in the history
+of this file (commit `f4f8a4e98`).
+
+---
+
 ## Complete inventory
 
-Every report line that is blank on one side, across all 233 blocks, belongs to
-one of the findings above.  There is nothing unexplained left.
+Every report line that is blank on one side belongs to one of the four
+findings above. There is nothing unexplained left.
 
-| Finding | Report lines | Blocks |
+| Finding | Report lines | Blocks (each in both temperature branches) |
 |---:|---:|---|
-| 1 — impurity ion pressure in the diamagnetic tangents | 96 | `amat(var_rho,var_rhoimp)` 4, `amat(var_rho,var_t)` 2, `amat(var_rho,var_ti)` 2, `amat(var_u,var_rhoimp)` 44, `amat(var_u,var_t)` 22, `amat(var_u,var_ti)` 22 |
-| 2 — impurity electron pressure in the induction tangents | 30 | `amat(var_psi,var_rhoimp)` 10, `amat(var_psi,var_t)` 8, `amat(var_psi,var_te)` 8, `amat_n(var_psi,var_rhoimp)` 2, `amat_n(var_psi,var_t)` 1, `amat_n(var_psi,var_te)` 1 |
-| 4 — pinch not differentiated with respect to psi | 24 | `amat(var_rho,var_psi)` 12, `amat(var_vpar,var_psi)` 12 |
-| 5 — alpha_e(T) in the density sources | 6 | `amat(var_rho,var_t)` 3, `amat(var_rho,var_te)` 3 |
-| 6 — parallel-velocity time term | 36 | `amat(var_vpar,var_psi)` 8, `amat(var_vpar,var_rho)` 8, `amat(var_vpar,var_vpar)` 8, `rhs_ij(var_vpar)` 12 |
-| 7 — BB2 in the tgnum_vpar tangent | 240 | `amat(var_vpar,var_psi)` 192, `amat_k(var_vpar,var_psi)` 48 |
-| 8 — toroidal channel of the parallel-parallel viscosity | 6 | `amat_kn(var_vpar,var_vpar)` 2, `amat_n(var_vpar,var_vpar)` 4 |
-| 10 — impurity parallel diffusivity, toroidal channel | 6 | `rhs_ij_k(var_rhoimp)` 6 |
-| 12 — omissions in the energy tangents (a,b) | 21 | `amat(var_t,var_psi)` 4, `amat(var_ti,var_psi)` 4, `amat(var_ti,var_te)` 1, `amat_k(var_t,var_rho)` 4, `amat_k(var_te,var_rho)` 4, `amat_k(var_ti,var_rho)` 4 |
-| 14 — alpha_e/alpha_imp versus their "bis" forms | 8 | `amat(var_te,var_te)` 4, `amat_k(var_t,var_psi)` 4 |
-| 15 — omissions in the electron and total energy tangents | 70 | `amat(var_t,var_rhoimp)` 15, `amat(var_t,var_t)` 28, `amat(var_te,var_rhoimp)` 5, `amat(var_te,var_rhon)` 4, `amat(var_te,var_te)` 18 |
-| 16 — neutral density in the single-T parallel convection | 8 | `rhs_ij(var_t)` 8 |
-| 17 — impurity pressure in amat_n(var_T,var_vpar) | 2 | `amat_n(var_t,var_vpar)` 2 |
-| **total** | **553** | |
+| 1 — impurity ion pressure, tauIC terms (accepted) | 96 | `amat(var_u,var_rhoimp)` 44, `amat(var_u,var_t)` 22, `amat(var_u,var_ti)` 22, `amat(var_rho,var_rhoimp)` 4, `amat(var_rho,var_t)` 2, `amat(var_rho,var_ti)` 2 |
+| 2 — impurity electron pressure, tauIC terms (accepted) | 30 | `amat(var_psi,var_rhoimp)` 10, `amat(var_psi,var_t)` 8, `amat(var_psi,var_te)` 8, `amat_n(var_psi,var_rhoimp)` 2, `amat_n(var_psi,var_t)` 1, `amat_n(var_psi,var_te)` 1 |
+| 4 — pinch not differentiated with respect to psi (open) | 24 | `amat(var_rho,var_psi)` 12, `amat(var_vpar,var_psi)` 12 |
+| 9 — sign of the vpar pinch tangent (open) | 16 | `amat(var_vpar,var_rho)` 8, `amat(var_vpar,var_vpar)` 8 |
+| **total** | **166** | 24 blocks: 8 source-only and 158 generated-only lines |
 
-Findings 3, 9, 11 and 13 do not appear in the table: their terms exist on both
-sides and differ only by a coefficient, a sign, a power of `BigR` or a missing
-`theta`, so the report puts them on one line rather than leaving a blank.  The
-counts above are report lines and are not the residual monomial counts quoted
-under each finding; several generated lines cancel against each other inside a
-residual.
-
-Only four source lines in the whole export have no generated partner at all:
-the two `alpha_e` lines of finding 14 and the two uncorrected-density lines of
-finding 15(b).  Both are symbol substitutions rather than scalings, so the
-matcher deliberately does not pair them; guessing symbol equivalences would
-hide exactly the kind of error they represent.
+The 8 source-only lines are the two wrong-sign pinch terms of finding 9, in
+each of its two blocks and both temperature branches. Each has a generated
+partner with the opposite sign. All other lines are terms the generator
+produces and the element routine does not.
 
 ---
 
@@ -180,56 +195,33 @@ hide exactly the kind of error they represent.
 
 The inventory above is frozen in
 [`reference/model600_discrepancies.json`](reference/model600_discrepancies.json)
-and checked by [`final_test.py`](final_test.py).  Each block of the reference
-names the findings it belongs to, so a failure points straight back at this
-document:
+and checked by [`final_test.py`](final_test.py) (or `run_test.sh`, which also
+sets up `sympy`). Each block of the reference names the finding it belongs
+to, so a failure points straight back at this document:
 
 ```bash
-./final_test.py
+./run_test.sh              # or: ./final_test.py
 ```
 
-Fixing any finding in the Fortran will make the benchmark fail with `-` lines
-for the monomials that stopped disagreeing.  That is the intended signal:
-re-run with `--update`, and strike the finding from this file.
+Fixing finding 4 or 9 in the Fortran will make the benchmark fail with `-`
+lines for the monomials that stopped disagreeing. That is the intended signal:
+re-run with `--update`, then remove the finding from this file.
 
 ## Reproducing
 
 ```bash
 cd util/equation_codegen
-python3 -m venv .venv && .venv/bin/python -m pip install -e .
-.venv/bin/python examples/export_model600_terms.py
-.venv/bin/python examples/diff_model600_reports.py
+module load sympy/1.14.0-gfbf-2025b        # or any Python with sympy
+python3 examples/export_model600_terms.py
+python3 examples/diff_model600_reports.py
 ```
 
 The **residual** printed under a `DIFF` block is the authoritative difference.
 It is computed in the element basis, where the two spellings of a poloidal
-bracket coincide, and displayed with `f_s -> f_x`, `f_t -> f_y`, `xjac -> 1`
-so that it reads as a physical expression. Every line that reaches the
-residual with a negative sign is a term the linearization produces and the
-element routine does not.
+bracket coincide. It is displayed with `f_s -> f_x`, `f_t -> f_y`,
+`xjac -> 1` so that it reads as a physical expression.
 
-The tool also verifies its own alignment: the blank cells of every block must
-account for that block's multiset difference, and a surplus is reported as
-`MISALIGNED`.  In the aligned Markdown reports, a blank cell on the generated
-side is therefore a genuine missing term: across all 233 blocks every source line has a generated
-counterpart on the same line, including the ones that differ only by a
-coefficient (findings 3, 6 and 9) or by a power of `BigR` (finding 11).
-
-Residual composition of the parallel-velocity blocks, for orientation:
-
-| Block | residual lines | by finding |
-|---|---:|---|
-| `rhs_ij(var_vpar)` | 8 | 6 |
-| `amat(var_vpar,var_psi)` | 98 | 7 (84), 4/9 (6), 6 (8) |
-| `amat_k(var_vpar,var_psi)` | 20 | 7 |
-| `amat(var_vpar,var_rho)` | 6 | 6 (4), 9 (2) |
-| `amat(var_vpar,var_vpar)` | 6 | 6 (4), 9 (2) |
-| `amat_n(var_vpar,var_vpar)` | 2 | 8 |
-| `amat_kn(var_vpar,var_vpar)` | 1 | 8 | A block reported with both `source` and `generated` lines and a non-zero
-residual is a coefficient disagreement: `amat(var_u,var_T)` (finding 3), the
-four `var_vpar` mass blocks (finding 6) and the two `var_vpar` pinch blocks
-(finding 9).
-
-A block reported as `SAME` differs only in whether a poloidal bracket is
-written in element or physical coordinates; `amat(var_vpar,var_psi)` still
-contains 16 such lines mixed in with its genuine differences.
+The tool also verifies its own alignment. The blank cells of every block must
+account for that block's multiset difference, and any surplus is reported as
+`MISALIGNED`. In the aligned Markdown reports, a blank cell on the generated
+side is therefore a genuinely missing term.
