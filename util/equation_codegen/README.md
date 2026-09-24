@@ -26,6 +26,7 @@ differentiated one becomes a trial function.
 | `src/jorek_equations/fortran_source.py` | step 1 and step 3: read the element routine, normalize its work variables, compare |
 | `src/jorek_equations/model199.py`, `model600.py` | the equations themselves |
 | `src/jorek_equations/model600_markdown.py` | step 4: the aligned Markdown reports |
+| `src/jorek_equations/latex_render.py`, `model600_docs.py`, `model600_notation.py` | the model-600 documentation, generated from `model600.py` |
 | `final_test.py`, `reference/` | the regression benchmark |
 
 ## Setup and tests
@@ -51,6 +52,28 @@ python3 examples/check_model199.py
 The comparison is symbolic rather than textual. A mismatch raises an error
 that includes the source expression, the generated expression, and their
 algebraic difference.
+
+## Model 600 documentation
+
+[`docs/physics/base_fluid_models/RMHD/weak_form.md`](../../docs/physics/base_fluid_models/RMHD/weak_form.md)
+documents the model-600 equations: every equation written out in full, the
+shared operators, and each equation's term groups. Its math is generated from
+`model600.py`, which stays the only place the equations are written; the
+generator reads the Python source (it does not evaluate it), so each
+`_helper` appears as a named operator and each commented block of a `B = (...)`
+sum becomes a term group. How each name is written in LaTeX, and the titles and
+descriptions of the operators, are in `model600_notation.py`. Only the regions
+between `BEGIN GENERATED` and `END GENERATED` are rewritten; the prose around
+them is hand-written.
+
+```bash
+python3 examples/model600_docs.py render   # rewrite the generated regions
+python3 examples/model600_docs.py check    # exit 1 if the page is stale
+```
+
+The unit tests and `run_test.sh` run `check`, so a change to `model600.py`
+that is not rendered into the page fails the build. A new equation or helper
+must also be added to `model600_notation.py`; `render` says so if it is missing.
 
 ## Model 600 reports
 
