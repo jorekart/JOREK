@@ -24,7 +24,9 @@ rewrite is reported as `SAME`.
 The original audit reported seventeen findings. Findings 3, 5–8 and 10–17
 have since been fixed in the Fortran (one commit per finding, `fix
 linearization: finding N, ...`), and their sections have been removed from
-this file. What is left disagrees in 24 blocks, for two reasons:
+this file. The neutral density row `rhon` was added afterwards and brought
+findings 18 and 19, which have also since been fixed. What is left disagrees
+in 24 blocks, for two reasons:
 
 - **Open: the inward pinch (findings 4 and 9).** These are real
   inconsistencies in the Jacobian, but the pinch implementation as a whole
@@ -46,6 +48,7 @@ Status of the exported rows:
 | `rho` | reproduced | findings 1 (tauIC × impurities only) and 4 |
 | `vpar` | reproduced | findings 4 and 9 |
 | `rhoimp` | reproduced | reproduced |
+| `rhon` | reproduced | reproduced |
 | `Ti` | reproduced | reproduced |
 | `Te` | reproduced | reproduced |
 | `T` | reproduced | reproduced |
@@ -184,10 +187,10 @@ findings above. There is nothing unexplained left.
 | 9 — sign of the vpar pinch tangent (open) | 16 | `amat(var_vpar,var_rho)` 8, `amat(var_vpar,var_vpar)` 8 |
 | **total** | **166** | 24 blocks: 8 source-only and 158 generated-only lines |
 
-The 8 source-only lines are the two wrong-sign pinch terms of finding 9, in
-each of its two blocks and both temperature branches. Each has a generated
-partner with the opposite sign. All other lines are terms the generator
-produces and the element routine does not.
+The 8 source-only lines are the wrong-sign pinch terms of finding 9, two per
+block in both temperature branches. Each has a generated partner with the
+opposite sign. All other lines are terms the generator produces and the
+element routine does not.
 
 ---
 

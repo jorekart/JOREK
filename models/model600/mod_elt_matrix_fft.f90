@@ -4599,8 +4599,8 @@ do i=1,n_vertex_max
                                              + v * Vpar0 * (rn0_s   * psi_t - rn0_t   * psi_s)         * theta * tstep )
 
                     amat(var_rhon,var_u) = delta_n_convection*(                                                        &
-                                  + v * BigR**2 * ( rn0_s * u_t - rn0_t * u_s)                         * theta * tstep &
-                                  + v * 2.d0 * BigR * rn0 * u_y                                 * xjac * theta * tstep )
+                                  - v * BigR**2 * ( rn0_s * u_t - rn0_t * u_s)                         * theta * tstep &
+                                  - v * 2.d0 * BigR * rn0 * u_y                                 * xjac * theta * tstep )
 
                     amat(var_rhon,var_rho) = + BigR * v * rn0 * Sion_T * rho                    * xjac * theta * tstep &
                                 - BigR * v * (2.d0*r0 +(alpha_e-1.)*rimp0) * rho * Srec_T       * xjac * theta * tstep 
@@ -4610,10 +4610,14 @@ do i=1,n_vertex_max
               
                     if (with_TiTe) then
                       amat(var_rhon,var_Te) = + BigR * v * (r0+alpha_e*rimp0) * rn0 * dSion_dT * Te        * xjac * theta * tstep &
-                                              - BigR * v * (r0+alpha_e*rimp0) * (r0-rimp0) * dSrec_dT * Te * xjac * theta * tstep       
+                                              + BigR * v * dalpha_e_dT * rimp0 * rn0 * Sion_T * Te          * xjac * theta * tstep &
+                                              - BigR * v * (r0+alpha_e*rimp0) * (r0-rimp0) * dSrec_dT * Te * xjac * theta * tstep  &
+                                              - BigR * v * dalpha_e_dT * rimp0 * (r0-rimp0) * Srec_T * Te   * xjac * theta * tstep
                     else
-                      amat(var_rhon,var_T) = + BigR * v * r0 * rn0 * dSion_dT * T     * xjac * theta * tstep &
-                                             - BigR * v * r0 * r0  * dSrec_dT * T     * xjac * theta * tstep       
+                      amat(var_rhon,var_T) = + BigR * v * (r0+alpha_e*rimp0) * rn0 * dSion_dT * T           * xjac * theta * tstep &
+                                             + BigR * v * dalpha_e_dT * rimp0 * rn0 * Sion_T * T             * xjac * theta * tstep &
+                                             - BigR * v * (r0+alpha_e*rimp0) * (r0-rimp0) * dSrec_dT * T    * xjac * theta * tstep  &
+                                             - BigR * v * dalpha_e_dT * rimp0 * (r0-rimp0) * Srec_T * T     * xjac * theta * tstep
                     endif  ! with_TiTe
 
                     if (with_vpar) then 

@@ -80,6 +80,10 @@ tgnum_vpar = coefficient("tgnum_vpar")
 aux_mom_par0 = coefficient("aux_mom_par0")
 dV_dpsi_source = coefficient("dV_dpsi_source")
 Dn_perp_num = coefficient("Dn_perp_num")
+Dn0x = coefficient("Dn0x")
+Dn0y = coefficient("Dn0y")
+Dn0p = coefficient("Dn0p")
+source_neutral_drift = coefficient("source_neutral_drift")
 tgnum_rhoimp = coefficient("tgnum_rhoimp")
 heat_source_i = coefficient("heat_source_i")
 ZK_i_perp_num_psin = coefficient("ZK_i_perp_num_psin")
@@ -802,6 +806,40 @@ def impurity_density_equation_rhoimp(*, with_TiTe=False):
     ) * dV
     
     return EvolutionEquation("model600_impurity_density", v, A, B)
+
+def neutral_density_equation_rhon(*, with_TiTe=False):
+    """Model-600 fluid-neutral density equation (``var_rhon``)."""
+
+    v = test_function("v")
+    T_or_Te = Te if with_TiTe else T
+    ne = rho + alpha_e_state(T_or_Te) * rhoimp
+    rho_main = rho - rhoimp
+    dV = R * xjac
+
+    # Time derivative
+    A = v * rhon * dV
+
+    # Other terms and RHS
+    B = (
+        # anisotropic diffusion
+        - (Dn0x * dR(v) * dR(rhon) + Dn0y * dZ(v) * dZ(rhon))
+        - Dn0p * dphi(v) * dphi(rhon) / R**2
+
+        # convection/compression with the plasma flow
+        + delta_n_convection * v * (_u_convection(rhon) + _parallel_convection(rhon))
+
+        # ionization and recombination with the main/impurity ions
+        - v * ne * rhon * Sion_rate(T_or_Te)
+        + v * ne * rho_main * Srec_rate(T_or_Te)
+
+        # neutral source
+        + v * source_neutral_drift
+
+        # numerical stabilization
+        - Dn_perp_num * laplacian(v) * laplacian(rhon)
+    ) * dV
+
+    return EvolutionEquation("model600_neutral_density", v, A, B)
 
 def ion_energy_equation_Ti(*, st_form=True):
     """Model-600 ion energy equation (``var_Ti``).

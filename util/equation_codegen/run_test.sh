@@ -25,7 +25,7 @@
 #   util/equation_codegen/run_test.sh              # check the current tree
 #   util/equation_codegen/run_test.sh --update      # rewrite the reference
 #                                                    # after an intended change
-#   util/equation_codegen/run_test.sh --parallel    # check the 10 rows as
+#   util/equation_codegen/run_test.sh --parallel    # check the 11 rows as
 #                                                    # separate background
 #                                                    # processes (one per
 #                                                    # equation), for a CI
@@ -38,7 +38,7 @@
 
 set -u
 
-ROWS="psi u rho vpar Ti Te T rhoimp zj w "
+ROWS="psi u rho vpar Ti Te T rhoimp rhon zj w "
 
 TESTNAME="equation_codegen"
 STARTDIR=$(readlink -f "$(dirname "$0")")

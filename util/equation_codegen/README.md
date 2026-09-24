@@ -55,7 +55,7 @@ algebraic difference.
 ## Model 600 reports
 
 `export_model600_terms.py` writes the two line-aligned Markdown reports for
-the `psi`, `u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`, `Ti`, `Te` and `T` rows:
+the `psi`, `u`, `zj`, `w`, `rho`, `vpar`, `rhoimp`, `rhon`, `Ti`, `Te` and `T` rows:
 
 ```bash
 python3 examples/export_model600_terms.py
@@ -148,12 +148,12 @@ reference, which usually explains the rest of the output.
 
 ## Known JOREK differences
 
-With the conventions above, all ten rows (`psi`, `u`, `zj`, `w`, `rho`,
-`vpar`, `rhoimp`, `Ti`, `Te` and `T`) are reproduced by the generator. The
-first audit reported seventeen findings. Most have since been fixed in the
-Fortran, and every residual (`rhs_ij`) now agrees exactly. The 24 assignment
-blocks that still differ are all Jacobian tangents, and they fall into two
-groups, documented in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
+With the conventions above, all eleven rows (`psi`, `u`, `zj`, `w`, `rho`,
+`vpar`, `rhoimp`, `rhon`, `Ti`, `Te` and `T`) are reproduced by the
+generator. The first audit reported seventeen findings for the first ten
+rows. Most have since been fixed in the Fortran, and every residual
+(`rhs_ij`) now agrees exactly. The assignment blocks that still differ are all
+Jacobian tangents, documented in [`JOREK_FINDINGS.md`](JOREK_FINDINGS.md):
 
 - **Open, left to the pinch developer**:
   - Finding 4: the density and parallel-velocity inward-pinch terms are not
