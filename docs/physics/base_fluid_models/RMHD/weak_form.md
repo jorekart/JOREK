@@ -87,8 +87,8 @@ Derived quantities that appear in several equations:
 | $\rho_{main}$ | $\rho - \rho_{imp}$ | main-ion mass density |
 | $n_i$ | $\rho + \alpha_i\,\rho_{imp}$ | ion density, $\alpha_i = m_i/m_{imp} - 1$ |
 | $n_e$ | $\rho + \alpha_e(\check{T}_e)\,\rho_{imp}$ | electron density, $\alpha_e = (m_i/m_{imp})\,Z_{imp} - 1$ |
-| $n_e^{\mathrm{c}}$ | $\rho^{\mathrm{c}} + \alpha_e(\check{T}_e)\,\rho_{imp}^{\mathrm{c}}$ | electron density from the corrected densities (not $\operatorname{corr}(n_e)$) |
-| $x^{\mathrm{c}}$ | $\operatorname{corr}(x)$ | density $x$ corrected for negative values (`corr_neg_dens`); $x^{\mathrm{c}} = x$ where $x$ is well above zero |
+| $n_e^{\mathrm{c}}$ | $\rho^{\mathrm{c}} + \alpha_e(\check{T}_e)\,\rho_{imp}^{\mathrm{c}}$ | electron density from the corrected densities (not $\mathrm{corr}(n_e)$) |
+| $x^{\mathrm{c}}$ | $\mathrm{corr}(x)$ | density $x$ corrected for negative values (`corr_neg_dens`); $x^{\mathrm{c}} = x$ where $x$ is well above zero |
 | $p_e(\Theta)$ | $\rho\,\Theta + \rho_{imp}\,A_e(\Theta)$ | electron pressure, $A_e(\Theta) = \alpha_e(\Theta)\,\Theta$; $\Theta = T_e$ in the electron energy equation and $\Theta = \hat{T}_e$ in the induction equation |
 | $p_i$ | $n_i\,\tilde{T}_i$ | ion pressure; written $p_i^{dia}$ in the diamagnetic terms |
 | $p$ | two-temperature: $\rho\,(T_i + T_e) + \rho_{imp}\,\big(\alpha_i\,T_i + A_e(T_e)\big)$; single-temperature: $\rho\,T + \rho_{imp}\,A_{imp}(T)$ | total pressure, $A_{imp}(T) = \alpha_{imp}(T)\,T$ with $\alpha_{imp} = \frac{1}{2}(m_i/m_{imp})(Z_{imp}+1) - 1$ |
@@ -135,7 +135,7 @@ R^{2}\,\left(-\rho^{\mathrm{c}}\,\left(\nabla_{\mathrm{pol}} v\cdot\nabla_{\math
 &- 2\,v\,\tau_{IC}\,R^{3}\,[p_i,\omega]^{st} \\
 &- 2\,\tau_{IC}\,R^{2}\,\partial_{Z} p_i\,\left(\nabla_{\mathrm{pol}} v\cdot\nabla_{\mathrm{pol}} u\right) \\
 &- 2\,v\,\tau_{IC}\,R^{3}\,\left(\partial_{R}\partial_{Z} u\,\left(\partial_{R}\partial_{R} p_i - \partial_{Z}\partial_{Z} p_i\right) - \partial_{R}\partial_{Z} p_i\,\left(\partial_{R}\partial_{R} u - \partial_{Z}\partial_{Z} u\right)\right) \\
-&+ \mu_\perp'(\check{T}_e)\,W_{dia}\,\left(\nabla_{\mathrm{pol}} \begin{cases} T_i & \text{if } \texttt{with\_TiTe} \\ \frac{T}{2} & \text{otherwise} \end{cases}\cdot\nabla_{\mathrm{pol}} v\right) \\
+&+ \mu_\perp'(\check{T}_e)\,W_{dia}\,\left(\nabla_{\mathrm{pol}} \begin{cases} T_i & \text{if } \texttt{with TiTe} \\ \frac{T}{2} & \text{otherwise} \end{cases}\cdot\nabla_{\mathrm{pol}} v\right) \\
 &+ \mu_\perp(\check{T}_e)\,W_{dia}\,\nabla^2_{\mathrm{pol}} v \\
 &+ f_{cons}\,\left(\nabla_{\mathrm{pol}} v\cdot\nabla_{\mathrm{pol}} u\right)\,\left(-R\,[\hat{\rho},u] + F_0\,\left(\rho\,\partial_{\phi} v_\parallel + v_\parallel\,\partial_{\phi} \rho\right) + R\,\rho\,[v_\parallel,\psi] + R\,v_\parallel\,[\rho,\psi]\right) \\
 &- v\,\left(P_\parallel^{RE} + P_\perp^{RE}\right) \\
@@ -277,7 +277,7 @@ $$
 &+ Q_{kin}(v) \\
 &+ \mathcal{T}_p(v, p_i; c_{TG}^{T_i}) \\
 &- \kappa_{\perp,num}^{i}\,\nabla^2_{\mathrm{pol}} v\,\nabla^2_{\mathrm{pol}} T_i \\
-&+ \mathcal{H}(v, \epsilon_i^{floor}(T_i), T_i^{floor}(T_i), T_{min})
+&+ \mathcal{H}(v, \epsilon_i^{\mathrm{floor}}(T_i), T_i^{\mathrm{floor}}(T_i), T_{\mathrm{min}})
 \end{aligned}
 $$
 
@@ -304,7 +304,7 @@ $$
 &+ \mathcal{Q}_{ion}(v, W_{ion}, T_e) \\
 &+ \mathcal{T}_p(v, p_e; c_{TG}^{T_e}) \\
 &- \kappa_{\perp,num}^{e}\,\nabla^2_{\mathrm{pol}} v\,\nabla^2_{\mathrm{pol}} T_e \\
-&+ \mathcal{H}(v, \epsilon_e^{floor}(T_e), T_e^{floor}(T_e), T_{min})
+&+ \mathcal{H}(v, \epsilon_e^{\mathrm{floor}}(T_e), T_e^{\mathrm{floor}}(T_e), T_{\mathrm{min}})
 \end{aligned}
 $$
 
@@ -335,7 +335,7 @@ $$
 &+ Q_{kin}(v) \\
 &+ \mathcal{T}_p(v, p; c_{TG}^{T}) \\
 &- \kappa_{\perp,num}\,\nabla^2_{\mathrm{pol}} v\,\nabla^2_{\mathrm{pol}} T \\
-&+ \mathcal{H}(v, \epsilon^{floor}(T), T^{floor}(T), T_{min})
+&+ \mathcal{H}(v, \epsilon^{\mathrm{floor}}(T), T^{\mathrm{floor}}(T), T_{\mathrm{min}})
 \end{aligned}
 $$
 
@@ -453,8 +453,9 @@ differentiating $A$ and $B$ with respect to each variable.
   different monomials. Where the element-coordinate bracket appears without
   its $1/\mathcal{J}$, it is written $\mathcal{J}\,[a,b]^{st}$.
 - $\nabla_{\mathrm{pol}} = (\partial_R, \partial_Z)$ is the **poloidal** gradient: it has
-  no toroidal component, and $\nabla_{\mathrm{pol}} a\cdot\nabla_{\mathrm{pol}} b =
-  \partial_R a\,\partial_R b + \partial_Z a\,\partial_Z b$. Toroidal derivatives are
+  no toroidal component, and
+  $\nabla_{\mathrm{pol}} a\cdot\nabla_{\mathrm{pol}} b = \partial_R a\,\partial_R b + \partial_Z a\,\partial_Z b$.
+  Toroidal derivatives are
   always written explicitly as $\partial_\phi$. Likewise
   $\nabla^2_{\mathrm{pol}} f = \partial_R\partial_R f + \partial_Z\partial_Z f + \partial_R f / R$
   is the poloidal part of the Laplacian.
@@ -560,9 +561,9 @@ Names that are not listed are rendered from their Python spelling:
 | `aux_E0_Te` | $H_e^{aux}$ |
 | `power_dens_teleport_ju` | $P_{teleport}$ |
 | `ksi_ion_norm` | $\xi_{ion}$ |
-| `implicit_heat_source` | $c_{floor}$ |
-| `T_min_neg` | $T_{min}$ |
-| `Tie_min_neg` | $T_{min}$ |
+| `implicit_heat_source` | $c_{\mathrm{floor}}$ |
+| `T_min_neg` | $T_{\mathrm{min}}$ |
+| `Tie_min_neg` | $T_{\mathrm{min}}$ |
 | `aux_jre` | $j_{RE}$ |
 | `aux_jre_ind` | $j_{RE}^{ind}$ |
 | `aux_P_par_re` | $P_\parallel^{RE}$ |
@@ -620,8 +621,8 @@ $x^{\mathrm{c}}$ is a density corrected for negative values.
 | `ZKi_perp` | $\kappa_{\perp,i}$ |
 | `visco_heating` | $\mu_{heat}$ |
 | `Ti_e_exchange` | $Q_{ie}$ |
-| `Ti_floor` | $T_i^{floor}$ |
-| `Ti_floor_exp` | $\epsilon_i^{floor}$ |
+| `Ti_floor` | $T_i^{\mathrm{floor}}$ |
+| `Ti_floor_exp` | $\epsilon_i^{\mathrm{floor}}$ |
 | `E_ion_bg_state` | $E_{ion}^{bg}$ |
 | `E_ion_state` | $E_{ion}$ |
 | `ZKe_par` | $\kappa_{\parallel,e}$ |
@@ -632,12 +633,12 @@ $x^{\mathrm{c}}$ is a density corrected for negative values.
 | `frad_bg_state` | $f_{rad}^{bg}$ |
 | `Lrad_state` | $L_{rad}$ |
 | `Te_i_exchange` | $Q_{ei}$ |
-| `Te_floor` | $T_e^{floor}$ |
-| `Te_floor_exp` | $\epsilon_e^{floor}$ |
+| `Te_floor` | $T_e^{\mathrm{floor}}$ |
+| `Te_floor_exp` | $\epsilon_e^{\mathrm{floor}}$ |
 | `ZK_par` | $\kappa_\parallel$ |
 | `ZK_perp` | $\kappa_\perp$ |
-| `T_floor` | $T^{floor}$ |
-| `T_floor_exp` | $\epsilon^{floor}$ |
+| `T_floor` | $T^{\mathrm{floor}}$ |
+| `T_floor_exp` | $\epsilon^{\mathrm{floor}}$ |
 
 <!-- END GENERATED: notation -->
 
@@ -860,11 +861,11 @@ Source: `_energy_tgnum`.
 
 #### Heating at the temperature floor
 
-Implicit heat source that keeps a temperature away from its floor $T_{min}$. $\epsilon$ and $T^{floor}$ are the floor functions of the element routine (`Ti_floor_exp`, `Ti0_floor` and their electron and single-temperature counterparts).
+Implicit heat source that keeps a temperature away from its floor $T_{\mathrm{min}}$. $\epsilon$ and $T^{\mathrm{floor}}$ are the floor functions of the element routine (`Ti_floor_exp`, `Ti0_floor` and their electron and single-temperature counterparts).
 
 $$
 \begin{aligned}
-\mathcal{H}(v, \epsilon, T^{floor}, T_{min}) &= c_{floor}\,\left(\Gamma - 1\right)\,v\,\left(\frac{1}{2}\,T_{min}\,\left(1 + \epsilon\right) - T^{floor}\right)
+\mathcal{H}(v, \epsilon, T^{\mathrm{floor}}, T_{\mathrm{min}}) &= c_{\mathrm{floor}}\,\left(\Gamma - 1\right)\,v\,\left(\frac{1}{2}\,T_{\mathrm{min}}\,\left(1 + \epsilon\right) - T^{\mathrm{floor}}\right)
 \end{aligned}
 $$
 
@@ -878,7 +879,7 @@ The ion pressure of the diamagnetic terms, as built in `construct_pressure`. The
 
 $$
 \begin{aligned}
-\tilde{T}_i &= \begin{cases} T_i & \text{if } \texttt{with\_TiTe} \\ \frac{T}{2} & \text{otherwise} \end{cases} \\
+\tilde{T}_i &= \begin{cases} T_i & \text{if } \texttt{with TiTe} \\ \frac{T}{2} & \text{otherwise} \end{cases} \\
 p_i^{dia} &= \left(\rho + \rho_{imp}\,\alpha_i\right)\,\tilde{T}_i
 \end{aligned}
 $$
@@ -891,7 +892,7 @@ The element routine's `W_dia`. It is built from the ion pressure alone, so it ha
 
 $$
 \begin{aligned}
-W_{dia} &= \begin{cases} W_{dia}(\rho, T_i) & \text{if } \texttt{with\_TiTe} \\ W_{dia}(\rho, T) & \text{otherwise} \end{cases}
+W_{dia} &= \begin{cases} W_{dia}(\rho, T_i) & \text{if } \texttt{with TiTe} \\ W_{dia}(\rho, T) & \text{otherwise} \end{cases}
 \end{aligned}
 $$
 
@@ -994,8 +995,8 @@ Source: `induction_equation_1` in `util/equation_codegen/src/jorek_equations/mod
 
 $$
 \begin{aligned}
-\check{T}_e &= \begin{cases} T_e & \text{if } \texttt{with\_TiTe} \\ T & \text{otherwise} \end{cases} \\
-\hat{T}_e &= \begin{cases} T_e & \text{if } \texttt{with\_TiTe} \\ \frac{T}{2} & \text{otherwise} \end{cases} \\
+\check{T}_e &= \begin{cases} T_e & \text{if } \texttt{with TiTe} \\ T & \text{otherwise} \end{cases} \\
+\hat{T}_e &= \begin{cases} T_e & \text{if } \texttt{with TiTe} \\ \frac{T}{2} & \text{otherwise} \end{cases} \\
 p_e &= \rho\,\hat{T}_e + \rho_{imp}\,A_e(\hat{T}_e) \\
 w_V &= R\,\mathcal{J}
 \end{aligned}
@@ -1065,12 +1066,12 @@ Source: `momentum_equation_2` in `util/equation_codegen/src/jorek_equations/mode
 
 $$
 \begin{aligned}
-\check{T}_e &= \begin{cases} T_e & \text{if } \texttt{with\_TiTe} \\ T & \text{otherwise} \end{cases} \\
+\check{T}_e &= \begin{cases} T_e & \text{if } \texttt{with TiTe} \\ T & \text{otherwise} \end{cases} \\
 \alpha_e &= \alpha_e(\check{T}_e) \\
 S_{ion} &= S_{ion}(\check{T}_e) \\
 S_{rec} &= S_{rec}(\check{T}_e) \\
 w_V &= R\,\mathcal{J} \\
-&\text{if } \texttt{with\_TiTe}\text{:} \\
+&\text{if } \texttt{with TiTe}\text{:} \\
 \quad p &= \rho\,\left(T_i + T_e\right) + \rho_{imp}\,\left(\alpha_i\,T_i + A_e(T_e)\right) \\
 &\text{otherwise:} \\
 \quad p &= \rho\,T + \rho_{imp}\,A_{imp}(T) \\
@@ -1143,7 +1144,7 @@ $$
 &- 2\,v\,\tau_{IC}\,R^{3}\,[p_i,\omega]^{st} \\
 &- 2\,\tau_{IC}\,R^{2}\,\partial_{Z} p_i\,\left(\nabla_{\mathrm{pol}} v\cdot\nabla_{\mathrm{pol}} u\right) \\
 &- 2\,v\,\tau_{IC}\,R^{3}\,\left(\partial_{R}\partial_{Z} u\,\left(\partial_{R}\partial_{R} p_i - \partial_{Z}\partial_{Z} p_i\right) - \partial_{R}\partial_{Z} p_i\,\left(\partial_{R}\partial_{R} u - \partial_{Z}\partial_{Z} u\right)\right) \\
-&+ \mu_\perp'(\check{T}_e)\,W_{dia}\,\left(\nabla_{\mathrm{pol}} \begin{cases} T_i & \text{if } \texttt{with\_TiTe} \\ \frac{T}{2} & \text{otherwise} \end{cases}\cdot\nabla_{\mathrm{pol}} v\right) \\
+&+ \mu_\perp'(\check{T}_e)\,W_{dia}\,\left(\nabla_{\mathrm{pol}} \begin{cases} T_i & \text{if } \texttt{with TiTe} \\ \frac{T}{2} & \text{otherwise} \end{cases}\cdot\nabla_{\mathrm{pol}} v\right) \\
 &+ \mu_\perp(\check{T}_e)\,W_{dia}\,\nabla^2_{\mathrm{pol}} v
 \end{aligned}
 $$
@@ -1218,7 +1219,7 @@ Source: `density_equation_rho` in `util/equation_codegen/src/jorek_equations/mod
 
 $$
 \begin{aligned}
-\check{T}_e &= \begin{cases} T_e & \text{if } \texttt{with\_TiTe} \\ T & \text{otherwise} \end{cases} \\
+\check{T}_e &= \begin{cases} T_e & \text{if } \texttt{with TiTe} \\ T & \text{otherwise} \end{cases} \\
 \rho_{main} &= \rho - \rho_{imp} \\
 n_e &= \rho + \alpha_e(\check{T}_e)\,\rho_{imp} \\
 D_\parallel^{\mathrm{tot}} &= D_\parallel + D_{\parallel,sc}\,\tau_{sc} \\
@@ -1327,12 +1328,12 @@ Source: `parallel_velocity_equation_vpar` in `util/equation_codegen/src/jorek_eq
 
 $$
 \begin{aligned}
-\check{T}_e &= \begin{cases} T_e & \text{if } \texttt{with\_TiTe} \\ T & \text{otherwise} \end{cases} \\
+\check{T}_e &= \begin{cases} T_e & \text{if } \texttt{with TiTe} \\ T & \text{otherwise} \end{cases} \\
 B^2 &= B^2(\psi) \\
 w_V &= R\,\mathcal{J} \\
 n_e &= \rho + \alpha_e(\check{T}_e)\,\rho_{imp} \\
-p &= \begin{cases} \rho\,\left(T_i + T_e\right) & \text{if } \texttt{with\_TiTe} \\ \rho\,T & \text{otherwise} \end{cases} \\
-&\text{if } \texttt{with\_TiTe}\text{:} \\
+p &= \begin{cases} \rho\,\left(T_i + T_e\right) & \text{if } \texttt{with TiTe} \\ \rho\,T & \text{otherwise} \end{cases} \\
+&\text{if } \texttt{with TiTe}\text{:} \\
 \quad p &\mathrel{+}= \rho_{imp}\,\left(\alpha_i\,T_i + A_e(T_e)\right) \\
 &\text{otherwise:} \\
 \quad p &\mathrel{+}= \rho_{imp}\,A_{imp}(T) \\
@@ -1514,7 +1515,7 @@ Source: `neutral_density_equation_rhon` in `util/equation_codegen/src/jorek_equa
 
 $$
 \begin{aligned}
-\check{T}_e &= \begin{cases} T_e & \text{if } \texttt{with\_TiTe} \\ T & \text{otherwise} \end{cases} \\
+\check{T}_e &= \begin{cases} T_e & \text{if } \texttt{with TiTe} \\ T & \text{otherwise} \end{cases} \\
 n_e &= \rho + \alpha_e(\check{T}_e)\,\rho_{imp} \\
 \rho_{main} &= \rho - \rho_{imp} \\
 w_V &= R\,\mathcal{J}
@@ -1586,7 +1587,7 @@ Source: `ion_energy_equation_Ti` in `util/equation_codegen/src/jorek_equations/m
 
 $$
 \begin{aligned}
-\mathcal{J}\,[\cdot,\cdot] &= \begin{cases} \mathcal{J}\,[\cdot,\cdot]^{st} & \text{if } \texttt{st\_form} \\ (a, b) \mapsto [a,b]\,\mathcal{J} & \text{otherwise} \end{cases} \\
+\mathcal{J}\,[\cdot,\cdot] &= \begin{cases} \mathcal{J}\,[\cdot,\cdot]^{st} & \text{if } \texttt{st form} \\ (a, b) \mapsto [a,b]\,\mathcal{J} & \text{otherwise} \end{cases} \\
 w_V &= R\,\mathcal{J} \\
 n_i &= \rho + \alpha_i\,\rho_{imp} \\
 p_i &= n_i\,T_i
@@ -1706,7 +1707,7 @@ $$
 
 $$
 \begin{aligned}
-&+ \mathcal{H}(v, \epsilon_i^{floor}(T_i), T_i^{floor}(T_i), T_{min})
+&+ \mathcal{H}(v, \epsilon_i^{\mathrm{floor}}(T_i), T_i^{\mathrm{floor}}(T_i), T_{\mathrm{min}})
 \end{aligned}
 $$
 
@@ -1720,7 +1721,7 @@ Source: `electron_energy_equation_Te` in `util/equation_codegen/src/jorek_equati
 
 $$
 \begin{aligned}
-\mathcal{J}\,[\cdot,\cdot] &= \begin{cases} \mathcal{J}\,[\cdot,\cdot]^{st} & \text{if } \texttt{st\_form} \\ (a, b) \mapsto [a,b]\,\mathcal{J} & \text{otherwise} \end{cases} \\
+\mathcal{J}\,[\cdot,\cdot] &= \begin{cases} \mathcal{J}\,[\cdot,\cdot]^{st} & \text{if } \texttt{st form} \\ (a, b) \mapsto [a,b]\,\mathcal{J} & \text{otherwise} \end{cases} \\
 w_V &= R\,\mathcal{J} \\
 p_e &= \rho\,T_e + \rho_{imp}\,A_e(T_e) \\
 n_e^{\mathrm{c}} &= \rho^{\mathrm{c}} + \alpha_e(T_e)\,\rho_{imp}^{\mathrm{c}} \\
@@ -1850,7 +1851,7 @@ $$
 
 $$
 \begin{aligned}
-&+ \mathcal{H}(v, \epsilon_e^{floor}(T_e), T_e^{floor}(T_e), T_{min})
+&+ \mathcal{H}(v, \epsilon_e^{\mathrm{floor}}(T_e), T_e^{\mathrm{floor}}(T_e), T_{\mathrm{min}})
 \end{aligned}
 $$
 
@@ -1864,7 +1865,7 @@ Source: `total_energy_equation_T` in `util/equation_codegen/src/jorek_equations/
 
 $$
 \begin{aligned}
-\mathcal{J}\,[\cdot,\cdot] &= \begin{cases} \mathcal{J}\,[\cdot,\cdot]^{st} & \text{if } \texttt{st\_form} \\ (a, b) \mapsto [a,b]\,\mathcal{J} & \text{otherwise} \end{cases} \\
+\mathcal{J}\,[\cdot,\cdot] &= \begin{cases} \mathcal{J}\,[\cdot,\cdot]^{st} & \text{if } \texttt{st form} \\ (a, b) \mapsto [a,b]\,\mathcal{J} & \text{otherwise} \end{cases} \\
 w_V &= R\,\mathcal{J} \\
 p &= \rho\,T + \rho_{imp}\,A_{imp}(T) \\
 n_e^{\mathrm{c}} &= \rho^{\mathrm{c}} + \alpha_e(T)\,\rho_{imp}^{\mathrm{c}} \\
@@ -2026,7 +2027,7 @@ $$
 
 $$
 \begin{aligned}
-&+ \mathcal{H}(v, \epsilon^{floor}(T), T^{floor}(T), T_{min})
+&+ \mathcal{H}(v, \epsilon^{\mathrm{floor}}(T), T^{\mathrm{floor}}(T), T_{\mathrm{min}})
 \end{aligned}
 $$
 

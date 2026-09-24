@@ -452,7 +452,11 @@ def _factors(node):
 
 
 def _condition(test):
-    return r"\texttt{%s}" % ast.unparse(test).replace("_", r"\_")
+    # GitHub's Markdown-to-KaTeX pipeline unescapes "\_" back to "_" before the
+    # math is parsed, which then errors inside \texttt{...} (text mode, where a
+    # bare "_" is invalid).  Render the flag name with spaces instead of a
+    # backslash escape, so no "\_" sequence reaches the page at all.
+    return r"\texttt{%s}" % ast.unparse(test).replace("_", " ")
 
 
 def _signed_terms(node):
