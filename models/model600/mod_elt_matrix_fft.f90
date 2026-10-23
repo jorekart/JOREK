@@ -32,6 +32,7 @@ use mod_impurity, only: radiation_function, radiation_function_linear
 use mod_sources
 use mod_model_settings
 use mod_plasma_functions
+use mod_jphi_gaussian_source, only: jphi_gaussian_rotated_source
 
 implicit none
 
@@ -53,7 +54,8 @@ integer    :: i, j, ms, mt, mp, k, l, index_ij, index_kl, index, index_k, index_
 integer    :: n_tor_start, n_tor_end, n_tor_local, n_tor_loop
 integer    :: in, im, ij1, ij2, ij3, ij4, ij5, ij6, ij7, ij8, kl1, kl2, kl3, kl4, kl5, kl6, kl7, kl8, ij, kl
 real*8     :: wst, xjac, xjac_s, xjac_t, xjac_x, xjac_y, BigR, r2, phi, delta_phi
-real*8     :: current_source(n_gauss,n_gauss),particle_source(n_gauss,n_gauss),heat_source(n_gauss,n_gauss),heat_source_i(n_gauss,n_gauss),heat_source_e(n_gauss,n_gauss)
+real*8     :: current_source(n_plane,n_gauss,n_gauss),particle_source(n_gauss,n_gauss),heat_source(n_gauss,n_gauss),heat_source_i(n_gauss,n_gauss),heat_source_e(n_gauss,n_gauss)
+real*8     :: jgs_J_R, jgs_J_Z, jgs_J_phi
 real*8     :: R_axis, Z_axis, psi_axis, psi_bnd, R_xpoint(2), Z_xpoint(2), dj_dpsi, dj_dz, source_pellet, source_volume
 real*8     :: Bgrad_rho_star,  Bgrad_rho,  Bgrad_vpar,  Bgrad_T_star,  Bgrad_Ti, Bgrad_Te, Bgrad_T, BB2
 real*8     :: Bgrad_rho_star_psi, Bgrad_rho_psi, Bgrad_rho_rho, Bgrad_vpar_vpar, Bgrad_vpar_psi,  Bgrad_T_star_psi, Bgrad_Ti_psi, Bgrad_T_psi, Bgrad_Ti_Ti, Bgrad_Te_psi, Bgrad_T_T, Bgrad_Te_Te, BB2_psi
@@ -474,9 +476,22 @@ h_e = dmin1(len1, len2)
 do ms=1, n_gauss
   do mt=1, n_gauss
 
-    if (keep_current_prof) &
-      call current(xpoint2, xcase2, x_g(ms,mt),y_g(ms,mt), Z_xpoint, eq_g(1,var_psi,ms,mt),psi_axis,psi_bnd,current_source(ms,mt))
-  
+    if (keep_current_prof) then
+      call current(xpoint2, xcase2, x_g(ms,mt),y_g(ms,mt), Z_xpoint, eq_g(1,var_psi,ms,mt),psi_axis,psi_bnd,current_source(1,ms,mt))
+      current_source(:,ms,mt) = current_source(1,ms,mt)
+    endif
+
+    ! --- Tilted gaussian external current source (J_phi*mu0 units); see mod_jphi_gaussian_source.f90
+    ! Computed once per Gauss point here (like the equilibrium current above), not inside the
+    ! per-basis-function (i,j) assembly loop below, to avoid accumulating it multiple times.
+    if (jgs_amplitude .ne. 0.d0) then
+      do mp = 1, n_plane
+        phi = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+        call jphi_gaussian_rotated_source(x_g(ms,mt), y_g(ms,mt), phi, jgs_J_R, jgs_J_Z, jgs_J_phi)
+        current_source(mp,ms,mt) = current_source(mp,ms,mt) - x_g(ms,mt) * jgs_J_phi
+      enddo
+    endif
+
     if ( with_TiTe ) then
       call sources(xpoint2, xcase2, y_g(ms,mt), Z_xpoint, eq_g(1,var_psi,ms,mt),psi_axis,psi_bnd, &
                    particle_source(ms,mt),heat_source_i(ms,mt),heat_source_e(ms,mt))
@@ -1564,7 +1579,7 @@ do i=1,n_vertex_max
             !#  Induction Equation                                                                             #
             !###################################################################################################
 
-            rhs_ij(var_psi) = v * eta_T  * (zj0 - current_source(ms,mt) - Jb)/ BigR           * xjac * tstep * factor(var_psi,1) &
+            rhs_ij(var_psi) = v * eta_T  * (zj0 - current_source(mp,ms,mt) - Jb)/ BigR           * xjac * tstep * factor(var_psi,1) &
                       
                       + v * (ps0_s * u0_t - ps0_t * u0_s)                                            * tstep * factor(var_psi,2) &
                       - v * F0 / BigR  * u0_p                                                 * xjac * tstep * factor(var_psi,2) &
@@ -2422,12 +2437,12 @@ do i=1,n_vertex_max
                               - v * tauIC*2. * rho /(r0_corr**2 * BB2) * F0**2/BigR**2 * (ps0_s * Pe0_t - ps0_t * Pe0_s) * theta * tstep &
                               + v * tauIC*2. * rho /(r0_corr**2 * BB2) * F0**3/BigR**3 * Pe0_p                    * xjac * theta * tstep &
                               ! The density gradient term from Z_eff
-                              - deta_dr0 * v * rho * (zj0-current_source(ms,mt)-Jb-aux_jre_ind) / BigR            * xjac * theta * tstep   !> aux_jre_ind from rep coupling
+                              - deta_dr0 * v * rho * (zj0-current_source(mp,ms,mt)-Jb-aux_jre_ind) / BigR            * xjac * theta * tstep   !> aux_jre_ind from rep coupling
 
                   amat_n(var_psi,var_rho) = - v * tauIC*2./(r0_corr*BB2) * F0**3/BigR**3 * Te0  * rho_p           * xjac * theta * tstep 
 
                   if ( with_TiTe ) then ! (with_TiTe) **********************************************
-                    amat(var_psi,var_Te) = - deta_dT * v * Te * (zj0-current_source(ms,mt)-Jb-aux_jre_ind) / BigR * xjac  * theta * tstep & !> aux_jre_ind from rep coupling
+                    amat(var_psi,var_Te) = - deta_dT * v * Te * (zj0-current_source(mp,ms,mt)-Jb-aux_jre_ind) / BigR * xjac  * theta * tstep & !> aux_jre_ind from rep coupling
 
                                    - deta_num_dT * Te * (v_x * zj0_x + v_y * zj0_y)              * xjac          * theta * tstep &
                               + v * tauIC*2./(r0_corr*BB2) * F0**2/BigR**2 * r0 * (ps0_s * Te_t  - ps0_t * Te_s) * theta * tstep &
@@ -2436,7 +2451,7 @@ do i=1,n_vertex_max
 
                     amat_n(var_psi,var_Te) = - v * tauIC*2./(r0_corr*BB2) * F0**3/BigR**3 * r0 * Te_p     * xjac * theta * tstep
                   else ! (with_TiTe = .f.), i.e. with single temperature *********************************
-                    amat(var_psi,var_T) = - deta_dT * v * T * (zj0-current_source(ms,mt)-Jb-aux_jre_ind)/ BigR    * xjac * theta * tstep & !> aux_jre_ind from rep coupling
+                    amat(var_psi,var_T) = - deta_dT * v * T * (zj0-current_source(mp,ms,mt)-Jb-aux_jre_ind)/ BigR    * xjac * theta * tstep & !> aux_jre_ind from rep coupling
 
                                    - deta_num_dT * T * (v_x * zj0_x + v_y * zj0_y)                        * xjac * theta * tstep &
 
@@ -2448,7 +2463,7 @@ do i=1,n_vertex_max
                   end if ! (with_TiTe) *************************************************************
 
                   if (with_impurities) then
-                    amat(var_psi,var_rhoimp) = - deta_drimp0 * v * rhoimp * (zj0-current_source(ms,mt)-Jb-aux_jre_ind) / BigR * xjac * theta * tstep !> aux_jre_ind from rep coupling
+                    amat(var_psi,var_rhoimp) = - deta_drimp0 * v * rhoimp * (zj0-current_source(mp,ms,mt)-Jb-aux_jre_ind) / BigR * xjac * theta * tstep !> aux_jre_ind from rep coupling
                   endif
 
                   !###################################################################################################

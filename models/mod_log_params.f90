@@ -976,6 +976,12 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
      write(*,REAL_FMT) 'jecamp              ',  jecamp
   endif
 
+  write(*,REAL_FMT) 'jgs_amplitude       ',  jgs_amplitude
+  write(*,REAL_FMT) 'jgs_R0              ',  jgs_R0
+  write(*,REAL_FMT) 'jgs_Z0              ',  jgs_Z0
+  write(*,REAL_FMT) 'jgs_width           ',  jgs_width
+  write(*,REAL_FMT) 'jgs_tilt_angle      ',  jgs_tilt_angle
+
 #if (defined WITH_Neutrals) || (defined WITH_Impurities)
      write(*,REAL_FMT) 'ns_amplitude        ',  ns_amplitude
      write(*,REAL_FMT) 'ns_R                ',  ns_R

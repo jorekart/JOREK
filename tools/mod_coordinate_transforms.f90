@@ -22,6 +22,7 @@ module mod_coordinate_transforms
   public :: vectors_spherical_to_cartesian
   public :: vectors_cartesian_to_spherical
   public :: rotate_vectors_cart_z
+  public :: rotate_vectors_cart_y
   public :: mirror_around_cart_x
   public :: mirror_around_cart_y
 
@@ -108,6 +109,13 @@ module mod_coordinate_transforms
     module procedure rotate_vectors_cart_z_std_r4
     module procedure rotate_vectors_cart_z_std_r8
   end interface rotate_vectors_cart_z
+
+  !> overload method for rotating axis along the standard
+  !> cartesian Y axis
+  interface rotate_vectors_cart_y
+    module procedure rotate_vectors_cart_y_std_r4
+    module procedure rotate_vectors_cart_y_std_r8
+  end interface rotate_vectors_cart_y
 
   !> overload method for mirroring a vector w.r.t. 
   !> to the standard x-axis
@@ -607,6 +615,44 @@ contains
     !> change the orientation of the plane points
     vect(1:2,:) = matmul(rot,vect(1:2,:))
   end subroutine rotate_vectors_cart_z_std_r8
+
+  !> rotate vector around the standard cartesian y axis
+  !> inputs:
+  !>   n_v:    (integer) number of vectors
+  !>   angle:  (real4) rotation angle
+  !>   vect:   (3,n_v)(real4) vectors to be rotated
+  !> outputs:
+  !>   vect:   (3,n_v)(real4) rotated vectors
+  subroutine rotate_vectors_cart_y_std_r4(n_v,angle,vect)
+    implicit none
+    integer,intent(in)                     :: n_v
+    real*4,intent(in)                      :: angle
+    real*4,dimension(3,n_v),intent(inout)  :: vect
+    real*4,dimension(2,2)                  :: rot
+    rot(1:2,1) = [cos(angle),-sin(angle)]
+    rot(1:2,2) = [-rot(2,1),rot(1,1)]
+    !> change the orientation of the x,z components; y is left unchanged
+    vect([1,3],:) = matmul(rot,vect([1,3],:))
+  end subroutine rotate_vectors_cart_y_std_r4
+
+  !> rotate vector around the standard cartesian y axis
+  !> inputs:
+  !>   n_v:    (integer) number of vectors
+  !>   angle:  (real8) rotation angle
+  !>   vect:   (3,n_v)(real8) vectors to be rotated
+  !> outputs:
+  !>   vect:   (3,n_v)(real8) rotated vectors
+  subroutine rotate_vectors_cart_y_std_r8(n_v,angle,vect)
+    implicit none
+    integer,intent(in)                     :: n_v
+    real*8,intent(in)                      :: angle
+    real*8,dimension(3,n_v),intent(inout)  :: vect
+    real*8,dimension(2,2)                  :: rot
+    rot(1:2,1) = [cos(angle),-sin(angle)]
+    rot(1:2,2) = [-rot(2,1),rot(1,1)]
+    !> change the orientation of the x,z components; y is left unchanged
+    vect([1,3],:) = matmul(rot,vect([1,3],:))
+  end subroutine rotate_vectors_cart_y_std_r8
 
   !> mirror the vectors w.r.t the standard cartesian x-axis
   !> inputs:

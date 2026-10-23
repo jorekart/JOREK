@@ -989,6 +989,13 @@ module phys_module
   real*8  :: JJ_par             ! velocity of resonent electrons
   real*8  :: jw1,jw2,jw3        ! parameters to determine current source
 
+  !> @name Tilted gaussian external current source (see mod_jphi_gaussian_source.f90)
+  real*8  :: jgs_amplitude      !< amplitude of the (untilted) toroidal current density Gaussian
+  real*8  :: jgs_R0             !< major radius of the Gaussian center (before tilting)
+  real*8  :: jgs_Z0             !< vertical position of the Gaussian center (before tilting)
+  real*8  :: jgs_width          !< width of the circular (single-width) Gaussian in R and Z
+  real*8  :: jgs_tilt_angle     !< angle (radians) by which the source is tilted about the cartesian y-axis (through R=0, Z=0)
+
   !> @name Flag for thermalization term
   logical             :: thermalization ! If true turns on the ion-electron thermalization term
 
