@@ -955,7 +955,25 @@ module phys_module
   real*8              :: T_min_neg          !< minimum temperature,used for correcting negative values,in jorek units: 2.01d-5*central_density*Tmin_ev (preset central_density = 1, 20 eV)  
   real*8              :: rho_min_neg        !< minimum density, used for correcting negative values  
   real*8              :: implicit_heat_source !< Choose = 1.d0 to fully switch on the implicit heat source for numerical stabilization
-  
+
+  !> Contains flags to optionally freeze individual variables (model600 only)
+  type :: type_freeze_variable
+    logical :: var_psi    !< freeze the psi/mag pot 3 variable
+    logical :: var_u      !< freeze the velocity stream function variable
+    logical :: var_zj     !< freeze the toroidal current density variable
+    logical :: var_w      !< freeze the vorticity variable
+    logical :: var_T      !< freeze the temperature variable
+    logical :: var_Ti     !< freeze the ion temperature variable
+    logical :: var_Te     !< freeze the electron temperature variable
+    logical :: var_vpar   !< freeze the parallel velocity variable
+    logical :: var_rho    !< freeze the density variable
+    logical :: var_rhon   !< freeze the neutral/impurity density variable
+    logical :: var_rhoimp !< freeze the impurity density variable
+    real*8  :: zbig       !< large value multiplying the diagonal matrix element of a frozen variable
+  end type type_freeze_variable
+
+  type (type_freeze_variable) :: freeze_variable !< optionally freeze variables (model600 only)
+
   integer             :: n_tor_fft_thresh   !< If n_tor >= n_tor_fft_thresh, element_matrix_fft will be used
   integer*8           :: fftw_plan          !< Required for FFTW library
   real*8              :: corr_neg_temp_coef(2) !< Parameters used in models/corr_neg.f90

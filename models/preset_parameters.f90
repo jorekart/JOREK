@@ -298,7 +298,20 @@ subroutine preset_parameters
   rho_min_neg        = -1.d12
   
   implicit_heat_source = 0.d0
-  
+
+  freeze_variable%var_psi    = .false.
+  freeze_variable%var_u      = .false.
+  freeze_variable%var_zj     = .false.
+  freeze_variable%var_w      = .false.
+  freeze_variable%var_T      = .false.
+  freeze_variable%var_Ti     = .false.
+  freeze_variable%var_Te     = .false.
+  freeze_variable%var_vpar   = .false.
+  freeze_variable%var_rho    = .false.
+  freeze_variable%var_rhon   = .false.
+  freeze_variable%var_rhoimp = .false.
+  freeze_variable%zbig       = 1.d12
+
   corr_neg_temp_coef(:) = (/ 0.5, 0.5 /)
   corr_neg_dens_coef(:) = (/ 0.5, 0.5 /)
 

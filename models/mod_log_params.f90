@@ -698,6 +698,18 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,REAL_FMT) 'ne_SI_min             ', ne_SI_min
   write(*,REAL_FMT) 'Te_eV_min             ', Te_eV_min
   write(*,REAL_FMT) 'implicit_heat_source  ', implicit_heat_source
+  write(*,LOGI_FMT) 'freeze_variable%var_psi   ', freeze_variable%var_psi
+  write(*,LOGI_FMT) 'freeze_variable%var_u     ', freeze_variable%var_u
+  write(*,LOGI_FMT) 'freeze_variable%var_zj    ', freeze_variable%var_zj
+  write(*,LOGI_FMT) 'freeze_variable%var_w     ', freeze_variable%var_w
+  write(*,LOGI_FMT) 'freeze_variable%var_T     ', freeze_variable%var_T
+  write(*,LOGI_FMT) 'freeze_variable%var_Ti    ', freeze_variable%var_Ti
+  write(*,LOGI_FMT) 'freeze_variable%var_Te    ', freeze_variable%var_Te
+  write(*,LOGI_FMT) 'freeze_variable%var_vpar  ', freeze_variable%var_vpar
+  write(*,LOGI_FMT) 'freeze_variable%var_rho   ', freeze_variable%var_rho
+  write(*,LOGI_FMT) 'freeze_variable%var_rhon  ', freeze_variable%var_rhon
+  write(*,LOGI_FMT) 'freeze_variable%var_rhoimp', freeze_variable%var_rhoimp
+  write(*,REAL_FMT) 'freeze_variable%zbig      ', freeze_variable%zbig
   write(*,REAL_FMT) 'rn0_min               ', rn0_min
   write(*,REAL_FMT) 'rho_min               ', rho_min
   write(*,REAL_FMT) 'rho_min_neg           ', rho_min_neg

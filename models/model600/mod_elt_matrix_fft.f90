@@ -226,6 +226,9 @@ real*8     :: aux_BdivPI,aux_BB2
 ! --- Using zkperp density dependence
 real*8     :: dZK_prof_drho, dZKe_prof_drho, dZKi_prof_drho
 
+! --- Parameters to opionally freeze variables
+real*8  :: freeze_var(0:n_var)
+
 #define DIM1 n_plane
 #define DIM2 1:n_vertex_max*n_var*n_degrees
 
@@ -261,6 +264,20 @@ if (present(get_terms)) then
 else
   max_terms_loop = 1
 endif
+
+! --- Check if any variables are chosen to be frozen
+freeze_var = 1.d0
+if (freeze_variable%var_psi   )  freeze_var(var_psi   ) = freeze_variable%zbig
+if (freeze_variable%var_u     )  freeze_var(var_u     ) = freeze_variable%zbig
+if (freeze_variable%var_zj    )  freeze_var(var_zj    ) = freeze_variable%zbig
+if (freeze_variable%var_w     )  freeze_var(var_w     ) = freeze_variable%zbig
+if (freeze_variable%var_T     )  freeze_var(var_T     ) = freeze_variable%zbig
+if (freeze_variable%var_Ti    )  freeze_var(var_Ti    ) = freeze_variable%zbig
+if (freeze_variable%var_Te    )  freeze_var(var_Te    ) = freeze_variable%zbig
+if (freeze_variable%var_vpar  )  freeze_var(var_vpar  ) = freeze_variable%zbig
+if (freeze_variable%var_rho   )  freeze_var(var_rho   ) = freeze_variable%zbig
+if (freeze_variable%var_rhon  )  freeze_var(var_rhon  ) = freeze_variable%zbig
+if (freeze_variable%var_rhoimp)  freeze_var(var_rhoimp) = freeze_variable%zbig
 
 ELM_p = 0.d0
 ELM_n = 0.d0
@@ -2384,7 +2401,7 @@ do i=1,n_vertex_max
                   !#  Induction Equation                                                                             #
                   !###################################################################################################
 
-                  amat(var_psi,var_psi) = v * psi / BigR * xjac * (1.d0 + zeta)                                                     &
+                  amat(var_psi,var_psi) = v * psi / BigR * xjac * (1.d0 + zeta) * freeze_var(var_psi)                               &
                             - v * (psi_s * u0_t - psi_t * u0_s)                                                     * theta * tstep &
                                                                                                                    
                      + v * tauIC*2./(r0_corr*BB2) * F0**2/BigR**2 * (psi_s * Pe0_t - psi_t * Pe0_s)                 * theta * tstep &
@@ -2466,7 +2483,7 @@ do i=1,n_vertex_max
                                                * BigR * xjac * tstep * theta
                   endif
 
-                  amat(var_u,var_u) = - BigR**3 * r0_corr * (v_x * u_x + v_y * u_y) * xjac * (1.d0 + zeta)                                &
+                  amat(var_u,var_u) = - BigR**3 * r0_corr * (v_x * u_x + v_y * u_y) * xjac * (1.d0 + zeta)  * freeze_var(var_u)           &
                                     + r0_hat * BigR**2 * w0 * (v_s * u_t  - v_t  * u_s)                                   * theta * tstep &
                                     + BigR**2 * (u_x * u0_x + u_y * u0_y) * (v_x * r0_y_hat - v_y * r0_x_hat)      * xjac * theta * tstep &
 
@@ -2719,14 +2736,14 @@ do i=1,n_vertex_max
                   !#  Current Definition Equation                                                                    #
                   !###################################################################################################
 
-                  amat(var_zj,var_zj) = v * zj / BigR * xjac
+                  amat(var_zj,var_zj) = v * zj / BigR * xjac * freeze_var(var_zj)
                   amat(var_zj,var_psi) = (v_x * psi_x + v_y * psi_y ) / BigR * xjac
 
                   !###################################################################################################
                   !#  Vorticity Definition Equation                                                                  #
                   !###################################################################################################
 
-                  amat(var_w,var_w) =  v * w * BigR * xjac                                
+                  amat(var_w,var_w) =  v * w * BigR * xjac  * freeze_var(var_w)                               
                   amat(var_w,var_u) = (v_x * u_x + v_y * u_y) * BigR * xjac              
 
                   !###################################################################################################
@@ -2767,7 +2784,7 @@ do i=1,n_vertex_max
                                        + tgnum_rho * 0.25d0 * BigR**3 * (r0_x * u0_y - r0_y * u0_x)                                                    &
                                                                     * ( v_x * u_y  - v_y  * u_x)                 * xjac * theta * tstep * tstep 
 
-                  amat(var_rho,var_rho) = v * rho * BigR * (1.d0 + zeta)                                            * xjac   &
+                  amat(var_rho,var_rho) = v * rho * BigR * (1.d0 + zeta)  * freeze_var(var_rho)                                     * xjac   &
                           - v * BigR**2 * ( rho_s * u0_t - rho_t * u0_s)                                       * theta * tstep &
                           - v * 2.d0 * BigR * rho * u0_y                                                * xjac * theta * tstep &
                           + ((D_par_local+D_par_sc_num*tau_sc)-D_prof) * BigR / BB2 * Bgrad_rho_star * Bgrad_rho_rho                * xjac * theta * tstep &
@@ -3083,7 +3100,7 @@ do i=1,n_vertex_max
                     end if ! (with_TiTe) ***********************************************************
 
  
-                    amat(var_vpar,var_vpar) = v * Vpar * r0_corr * F0**2 / BigR * xjac * (1.d0 + zeta) &
+                    amat(var_vpar,var_vpar) = v * Vpar * r0_corr * F0**2 / BigR * xjac * (1.d0 + zeta)  * freeze_var(var_vpar) &
   
                        ! New terms coming from -(\partial_t \rho + \nabla \cdot (\rho \mathbf{v})) \mathbf{v} in RHS of momentum equation
                        ! (see wiki: https://www.jorek.eu/wiki/doku.php?id=model500_501_555#equations):
@@ -3386,7 +3403,7 @@ do i=1,n_vertex_max
                                      * (      + F0 / BigR * v_p) * xjac * theta * tstep * tstep
   
   
-                    amat(var_Ti,var_Ti) = v * (r0_corr + rimp0_corr*alpha_i) * Ti  * BigR * xjac * (1.d0 + zeta)&
+                    amat(var_Ti,var_Ti) = v * (r0_corr + rimp0_corr*alpha_i) * Ti  * BigR * xjac * (1.d0 + zeta)  * freeze_var(var_Ti) &
                               - v * (r0 + rimp0*alpha_i) * BigR**2  * (Ti_s  * u0_t - Ti_t  * u0_s) * theta * tstep &
                               - v * Ti  * BigR**2 * (r0_s * u0_t - r0_t * u0_s)                     * theta * tstep &
                               - v * alpha_i * Ti * BigR**2 * (rimp0_s * u0_t - rimp0_t * u0_s)      * theta * tstep &
@@ -3755,7 +3772,7 @@ do i=1,n_vertex_max
                     amat(var_Te,var_Ti) = - v * BigR * ddTe_i_dTi * Ti                            * xjac * theta * tstep
   
   
-                    amat(var_Te,var_Te) = v * (r0_corr + rimp0_corr * alpha_e_bis) * Te  * BigR * xjac * (1.d0 + zeta)     &
+                    amat(var_Te,var_Te) = v * (r0_corr + rimp0_corr * alpha_e_bis) * Te  * BigR * xjac * (1.d0 + zeta)  * freeze_var(var_Te)    &
                     !=============== The ionization potential energy term=========================
                               + (GAMMA-1.) * v * rimp0 * dE_ion_dT  * Te * BigR * xjac * (1.d0 + zeta)                &
                               - (GAMMA-1.) * v * rimp0 * dE_ion_dT * BigR**2 * (Te_s*u0_t - Te_t*u0_s)  * theta * tstep &
@@ -4199,7 +4216,7 @@ do i=1,n_vertex_max
                                     * T0 * (+ F0 / BigR * rho_p)                                                      &
                                     * (     + F0 / BigR * v_p)                         * xjac * theta * tstep * tstep
   
-                    amat(var_T,var_T) = v * (r0_corr + rimp0_corr * alpha_imp_bis) * T  * BigR * xjac * (1.d0 + zeta)  &
+                    amat(var_T,var_T) = v * (r0_corr + rimp0_corr * alpha_imp_bis) * T  * BigR * xjac * (1.d0 + zeta)  * freeze_var(var_T) &
                          -implicit_heat_source*(gamma-1.d0)*v                                                          &
                          *(exp( (min(T0,T_min_neg)-T_min_neg)/(0.5d0*T_min_neg) ) -1.d0)*T* xjac*theta*tstep*BigR      &
                     !=============== The ionization potential energy term=========================
@@ -4523,7 +4540,7 @@ do i=1,n_vertex_max
 
                     endif ! with_vpar
 
-                    amat(var_rhon,var_rhon) = + v * rhon * BigR * xjac * (1.d0 + zeta)   &
+                    amat(var_rhon,var_rhon) = + v * rhon * BigR * xjac * (1.d0 + zeta)  * freeze_var(var_rhon)   &
 
                               + delta_n_convection*(                                                                                     &
                                 - v * BigR**2 * ( rhon_s * u0_t - rhon_t * u0_s)                       * theta * tstep &
@@ -4613,7 +4630,7 @@ do i=1,n_vertex_max
 
                      amat_n(var_rhoimp,var_vpar) = + v * rimp0 * F0 / BigR * vpar_p                   * xjac * theta * tstep 
                    end if
-                     amat(var_rhoimp,var_rhoimp)  = + v * rhoimp * BigR * xjac * (1.d0 + zeta)                                                          &
+                     amat(var_rhoimp,var_rhoimp)  = + v * rhoimp * BigR * xjac * (1.d0 + zeta)   * freeze_var(var_rhoimp)         &
                           - v * BigR**2 * ( rhoimp_s * u0_t - rhoimp_t * u0_s)                                  * theta * tstep &
                           - v * 2.d0 * BigR * rhoimp * u0_y                                            * xjac * theta * tstep &
                           + v * Vpar0 * (rhoimp_s * ps0_t - rhoimp_t * ps0_s)                                   * theta * tstep &
