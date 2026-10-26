@@ -55,7 +55,7 @@ integer    :: n_tor_start, n_tor_end, n_tor_local, n_tor_loop
 integer    :: in, im, ij1, ij2, ij3, ij4, ij5, ij6, ij7, ij8, kl1, kl2, kl3, kl4, kl5, kl6, kl7, kl8, ij, kl
 real*8     :: wst, xjac, xjac_s, xjac_t, xjac_x, xjac_y, BigR, r2, phi, delta_phi
 real*8     :: current_source(n_plane,n_gauss,n_gauss),particle_source(n_gauss,n_gauss),heat_source(n_gauss,n_gauss),heat_source_i(n_gauss,n_gauss),heat_source_e(n_gauss,n_gauss)
-real*8     :: jgs_J_R, jgs_J_Z, jgs_J_phi
+real*8     :: jgs_J_R, jgs_J_Z, jgs_J_phi, jgs_dJ_R_dt, jgs_dJ_Z_dt, jgs_dJ_phi_dt
 real*8     :: R_axis, Z_axis, psi_axis, psi_bnd, R_xpoint(2), Z_xpoint(2), dj_dpsi, dj_dz, source_pellet, source_volume
 real*8     :: Bgrad_rho_star,  Bgrad_rho,  Bgrad_vpar,  Bgrad_T_star,  Bgrad_Ti, Bgrad_Te, Bgrad_T, BB2
 real*8     :: Bgrad_rho_star_psi, Bgrad_rho_psi, Bgrad_rho_rho, Bgrad_vpar_vpar, Bgrad_vpar_psi,  Bgrad_T_star_psi, Bgrad_Ti_psi, Bgrad_T_psi, Bgrad_Ti_Ti, Bgrad_Te_psi, Bgrad_T_T, Bgrad_Te_Te, BB2_psi
@@ -487,7 +487,8 @@ do ms=1, n_gauss
     if (jgs_amplitude .ne. 0.d0) then
       do mp = 1, n_plane
         phi = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
-        call jphi_gaussian_rotated_source(x_g(ms,mt), y_g(ms,mt), phi, jgs_J_R, jgs_J_Z, jgs_J_phi)
+        call jphi_gaussian_rotated_source(x_g(ms,mt), y_g(ms,mt), phi, jgs_J_R, jgs_J_Z, jgs_J_phi, &
+                                           jgs_dJ_R_dt, jgs_dJ_Z_dt, jgs_dJ_phi_dt)
         current_source(mp,ms,mt) = current_source(mp,ms,mt) - x_g(ms,mt) * jgs_J_phi
       enddo
     endif

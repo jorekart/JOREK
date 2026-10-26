@@ -158,7 +158,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 T_min_neg,rho_min_neg,implicit_heat_source,         &
                 freeze_variable,                                    &
                 jgs_amplitude, jgs_R0, jgs_Z0, jgs_width,           &
-                jgs_tilt_angle,                                     &
+                jgs_tilt_angle, jgs_ramp_time,                      &
                 ne_SI_min, Te_eV_min, rn0_min,                      &
                 D_neutral_x, D_neutral_y, D_neutral_p,              &
                 neutral_reflection, rho_min,                        &

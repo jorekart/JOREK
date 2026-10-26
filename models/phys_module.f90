@@ -995,6 +995,7 @@ module phys_module
   real*8  :: jgs_Z0             !< vertical position of the Gaussian center (before tilting)
   real*8  :: jgs_width          !< width of the circular (single-width) Gaussian in R and Z
   real*8  :: jgs_tilt_angle     !< angle (radians) by which the source is tilted about the cartesian y-axis (through R=0, Z=0)
+  real*8  :: jgs_ramp_time      !< duration over which the source amplitude ramps up linearly from 0 to jgs_amplitude, starting at t=0; <= 0 means no ramp (full amplitude immediately)
 
   !> @name Flag for thermalization term
   logical             :: thermalization ! If true turns on the ion-electron thermalization term

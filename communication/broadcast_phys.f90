@@ -862,6 +862,7 @@ if (my_id .eq. 0) then
   call MPI_PACK(jgs_Z0,                 1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(jgs_width,              1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(jgs_tilt_angle,         1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(jgs_ramp_time,          1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(R_geo,                  1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(corr_neg_temp_coef,     2,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(corr_neg_dens_coef,     2,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
@@ -1889,6 +1890,7 @@ if (my_id .ne. 0) then
   call MPI_UNPACK(buffer,bufsize,position,jgs_Z0,                 1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,jgs_width,              1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,jgs_tilt_angle,         1,MPI_REAL8,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,jgs_ramp_time,          1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,R_geo,                  1,MPI_REAL8,MPI_COMM_WORLD,ierr)
 
   call MPI_UNPACK(buffer,bufsize,position,corr_neg_temp_coef,     2,MPI_REAL8,MPI_COMM_WORLD,ierr)

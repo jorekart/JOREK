@@ -3,12 +3,14 @@
 !> Defines a circular (single-width) 2D Gaussian current distribution J_phi(R,Z),
 !> purely in the toroidal direction (J = (0,0,J_phi)), then evaluates the current
 !> density that results from rigidly tilting that distribution about the cartesian
-!> y-axis (through R=0, Z=0) by a fixed angle. The input parameters
-!> (jgs_amplitude, jgs_R0, jgs_Z0, jgs_width, jgs_tilt_angle) are declared in
-!> phys_module.f90.
+!> y-axis (through R=0, Z=0) by a fixed angle. The amplitude ramps up linearly in
+!> time from 0 at t=0 to jgs_amplitude at t=jgs_ramp_time, then stays constant
+!> (jgs_ramp_time<=0 means no ramp, full amplitude immediately). The input
+!> parameters (jgs_amplitude, jgs_R0, jgs_Z0, jgs_width, jgs_tilt_angle,
+!> jgs_ramp_time) are declared in phys_module.f90.
 module mod_jphi_gaussian_source
 
-  use phys_module, only: jgs_amplitude, jgs_R0, jgs_Z0, jgs_width, jgs_tilt_angle
+  use phys_module, only: jgs_amplitude, jgs_R0, jgs_Z0, jgs_width, jgs_tilt_angle, jgs_ramp_time, t_now
   use mod_coordinate_transforms, only: cylindrical_to_cartesian, cartesian_to_cylindrical, &
                                         vector_cylindrical_to_cartesian, vector_cartesian_to_cylindrical, &
                                         rotate_vectors_cart_y
@@ -44,6 +46,32 @@ contains
 
     Jphi = jgs_amplitude * exp( -0.5d0*((R-jgs_R0)**2 + (Z-jgs_Z0)**2) / jgs_width**2 )
   end function jphi_gaussian_axisym
+
+  !> Linear ramp factor for the source amplitude: rises linearly from 0 at t=0
+  !> to 1 at t=jgs_ramp_time, then stays at 1. jgs_ramp_time<=0 means no ramp
+  !> (always fully on).
+  pure function jgs_ramp_scale(t) result(scale)
+    real*8, intent(in) :: t
+    real*8             :: scale
+
+    if (jgs_ramp_time .le. 0.d0) then
+      scale = 1.d0
+    else
+      scale = min(1.d0, max(0.d0,t) / jgs_ramp_time)
+    endif
+  end function jgs_ramp_scale
+
+  !> time derivative of jgs_ramp_scale.
+  pure function jgs_ramp_scale_rate(t) result(rate)
+    real*8, intent(in) :: t
+    real*8             :: rate
+
+    if (jgs_ramp_time .le. 0.d0 .or. t .lt. 0.d0 .or. t .ge. jgs_ramp_time) then
+      rate = 0.d0
+    else
+      rate = 1.d0 / jgs_ramp_time
+    endif
+  end function jgs_ramp_scale_rate
 
   !> Step 2: express a point of the axisymmetric source, and its purely-toroidal
   !> current vector there, in cartesian (x,y,z) coordinates.
@@ -84,9 +112,12 @@ contains
     J_R = Jcyl(1); J_Z = Jcyl(2); J_phi = Jcyl(3)
   end subroutine cartesian_source_to_cylindrical
 
-  !> Evaluate the tilted Gaussian current source at an arbitrary query point
-  !> (R,Z,phi), returning the resulting current density components J_R, J_Z, J_phi
-  !> there. This is the routine to call from a matrix assembly / Gauss-point loop.
+  !> Evaluate the tilted, time-ramped Gaussian current source at an arbitrary
+  !> query point (R,Z,phi), returning the resulting current density components
+  !> J_R, J_Z, J_phi there, along with their time derivatives dJ_R_dt, dJ_Z_dt,
+  !> dJ_phi_dt (from the linear amplitude ramp only; not currently used by any
+  !> equation, but exported for future use e.g. a term involving dJ/dt).
+  !> This is the routine to call from a matrix assembly / Gauss-point loop.
   !>
   !> Because the tilt displaces the source, evaluating it at an arbitrary query
   !> point (rather than only at the points the forward rotation happens to land on)
@@ -99,13 +130,19 @@ contains
   !> point's actual phi (step 4). This correctly reproduces "take the axisymmetric
   !> source, tilt the whole object, then ask what the tilted object's current
   !> density is at this point" for any point, not just the image of a chosen input.
-  subroutine jphi_gaussian_rotated_source(R,Z,phi,J_R,J_Z,J_phi)
-    real*8, intent(in)  :: R,Z,phi       !< query point in JOREK coordinates
-    real*8, intent(out) :: J_R,J_Z,J_phi !< current density at the query point
+  !>
+  !> The amplitude ramp only rescales the magnitude of the (fixed-shape, fixed-tilt)
+  !> source in time, so its time derivative carries through the same (linear)
+  !> coordinate transforms as the value itself: evaluate the untilted profile's
+  !> value and rate once, then push both through the identical rotate+convert steps.
+  subroutine jphi_gaussian_rotated_source(R,Z,phi,J_R,J_Z,J_phi,dJ_R_dt,dJ_Z_dt,dJ_phi_dt)
+    real*8, intent(in)  :: R,Z,phi                !< query point in JOREK coordinates
+    real*8, intent(out) :: J_R,J_Z,J_phi          !< current density at the query point
+    real*8, intent(out) :: dJ_R_dt,dJ_Z_dt,dJ_phi_dt !< time derivative of the above (ramp only)
 
-    real*8 :: xyz0(3), Jxyz(3)
-    real*8 :: cyl0(3), R0, Z0, phi0, Jphi0
-    real*8 :: Jcyl(3)
+    real*8 :: xyz0(3), Jxyz(3), dJxyz_dt(3)
+    real*8 :: cyl0(3), R0, Z0, phi0, Jphi0_full, scale, rate
+    real*8 :: Jcyl(3), dJcyl_dt(3)
 
     ! locate the pre-image of the query point under the tilt
     xyz0 = cylindrical_to_cartesian( (/R,Z,phi/) )
@@ -113,14 +150,24 @@ contains
     cyl0 = cartesian_to_cylindrical(xyz0)
     R0 = cyl0(1); Z0 = cyl0(2); phi0 = cyl0(3)
 
-    ! evaluate the original axisymmetric source there, and carry the current
-    ! vector forward through the same tilt
-    Jphi0 = jphi_gaussian_axisym(R0,Z0)
-    Jxyz  = vector_cylindrical_to_cartesian(phi0, (/0.d0,0.d0,Jphi0/))
-    Jxyz  = rotate_cart_y_vec3(jgs_tilt_angle,Jxyz)
+    ! evaluate the original (full-amplitude) axisymmetric source there, apply
+    ! the time ramp, and carry both the value and its time derivative forward
+    ! through the same tilt
+    Jphi0_full = jphi_gaussian_axisym(R0,Z0)
+    scale      = jgs_ramp_scale(t_now)
+    rate       = jgs_ramp_scale_rate(t_now)
 
-    Jcyl = vector_cartesian_to_cylindrical(phi, Jxyz)
+    Jxyz     = vector_cylindrical_to_cartesian(phi0, (/0.d0,0.d0,Jphi0_full*scale/))
+    dJxyz_dt = vector_cylindrical_to_cartesian(phi0, (/0.d0,0.d0,Jphi0_full*rate /))
+
+    Jxyz     = rotate_cart_y_vec3(jgs_tilt_angle,Jxyz)
+    dJxyz_dt = rotate_cart_y_vec3(jgs_tilt_angle,dJxyz_dt)
+
+    Jcyl     = vector_cartesian_to_cylindrical(phi, Jxyz)
+    dJcyl_dt = vector_cartesian_to_cylindrical(phi, dJxyz_dt)
+
     J_R = Jcyl(1); J_Z = Jcyl(2); J_phi = Jcyl(3)
+    dJ_R_dt = dJcyl_dt(1); dJ_Z_dt = dJcyl_dt(2); dJ_phi_dt = dJcyl_dt(3)
   end subroutine jphi_gaussian_rotated_source
 
 end module mod_jphi_gaussian_source

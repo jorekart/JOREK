@@ -873,6 +873,7 @@ subroutine preset_parameters
   jgs_Z0         = 0.d0
   jgs_width      = 0.1d0
   jgs_tilt_angle = 0.d0
+  jgs_ramp_time  = 0.d0 ! no ramp by default (full amplitude immediately)
 
   !> @name Mode families preconditioner parameters
   n_mode_families      = (n_tor + 1)/2

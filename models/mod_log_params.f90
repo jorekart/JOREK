@@ -981,6 +981,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,REAL_FMT) 'jgs_Z0              ',  jgs_Z0
   write(*,REAL_FMT) 'jgs_width           ',  jgs_width
   write(*,REAL_FMT) 'jgs_tilt_angle      ',  jgs_tilt_angle
+  write(*,REAL_FMT) 'jgs_ramp_time       ',  jgs_ramp_time
 
 #if (defined WITH_Neutrals) || (defined WITH_Impurities)
      write(*,REAL_FMT) 'ns_amplitude        ',  ns_amplitude
