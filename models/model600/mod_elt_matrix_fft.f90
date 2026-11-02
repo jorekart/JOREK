@@ -32,7 +32,7 @@ use mod_impurity, only: radiation_function, radiation_function_linear
 use mod_sources
 use mod_model_settings
 use mod_plasma_functions
-use mod_jphi_gaussian_source, only: jphi_gaussian_rotated_source
+use mod_jphi_gaussian_source, only: jphi_gaussian_rotated_source, Ip_gaussian_asymm
 
 implicit none
 
@@ -55,6 +55,7 @@ integer    :: n_tor_start, n_tor_end, n_tor_local, n_tor_loop
 integer    :: in, im, ij1, ij2, ij3, ij4, ij5, ij6, ij7, ij8, kl1, kl2, kl3, kl4, kl5, kl6, kl7, kl8, ij, kl
 real*8     :: wst, xjac, xjac_s, xjac_t, xjac_x, xjac_y, BigR, r2, phi, delta_phi
 real*8     :: current_source(n_plane,n_gauss,n_gauss),particle_source(n_gauss,n_gauss),heat_source(n_gauss,n_gauss),heat_source_i(n_gauss,n_gauss),heat_source_e(n_gauss,n_gauss)
+real*8     :: zj_gauss_tilt
 real*8     :: jgs_J_R, jgs_J_Z, jgs_J_phi, jgs_dJ_R_dt, jgs_dJ_Z_dt, jgs_dJ_phi_dt
 real*8     :: R_axis, Z_axis, psi_axis, psi_bnd, R_xpoint(2), Z_xpoint(2), dj_dpsi, dj_dz, source_pellet, source_volume
 real*8     :: Bgrad_rho_star,  Bgrad_rho,  Bgrad_vpar,  Bgrad_T_star,  Bgrad_Ti, Bgrad_Te, Bgrad_T, BB2
@@ -350,6 +351,7 @@ eq_aux_g = 0.d0; eq_aux_s = 0.d0; eq_aux_t = 0.d0; eq_aux_p = 0.d0;
 delta_g = 0.d0; delta_s = 0.d0; delta_t = 0.d0
 
 current_source  = 0.d0
+zj_gauss_tilt   = 0.d0
 particle_source = 0.d0
 heat_source_i   = 0.d0
 heat_source_e   = 0.d0
@@ -489,7 +491,11 @@ do ms=1, n_gauss
         phi = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
         call jphi_gaussian_rotated_source(x_g(ms,mt), y_g(ms,mt), phi, jgs_J_R, jgs_J_Z, jgs_J_phi, &
                                            jgs_dJ_R_dt, jgs_dJ_Z_dt, jgs_dJ_phi_dt)
-        current_source(mp,ms,mt) = current_source(mp,ms,mt) - x_g(ms,mt) * jgs_J_phi
+        current_source(mp,ms,mt) = current_source(mp,ms,mt) - x_g(ms,mt) * jgs_J_phi  ! needs to be converted to zj = -mu0 * R *Jphi  
+        ! Save normalized current zj = - R mu_0 Jphi for successive integration
+        zj_gauss_tilt = - x_g(ms,mt) * jgs_J_phi
+        ! Update the value of the integral on the corresponding plane
+        call Ip_gaussian_asymm(zj_gauss_tilt, mp, ms, mt, x_g(ms,mt), x_s(ms,mt), x_t(ms,mt), y_s(ms,mt), y_t(ms,mt))
       enddo
     endif
 

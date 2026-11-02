@@ -9,12 +9,15 @@
 !> parameters (jgs_amplitude, jgs_R0, jgs_Z0, jgs_width, jgs_tilt_angle,
 !> jgs_ramp_time) are declared in phys_module.f90.
 module mod_jphi_gaussian_source
-
+  
+  use mod_settings
   use phys_module, only: jgs_amplitude, jgs_R0, jgs_Z0, jgs_width, jgs_tilt_angle, jgs_ramp_time, t_now
   use mod_coordinate_transforms, only: cylindrical_to_cartesian, cartesian_to_cylindrical, &
                                         vector_cylindrical_to_cartesian, vector_cartesian_to_cylindrical, &
                                         rotate_vectors_cart_y
   implicit none
+
+  real*8, allocatable, public :: Ip_gaussian_p(:)
   private
 
   public :: jphi_gaussian_axisym
@@ -22,6 +25,7 @@ module mod_jphi_gaussian_source
   public :: rotate_gaussian_source_cartesian
   public :: cartesian_source_to_cylindrical
   public :: jphi_gaussian_rotated_source
+  public :: Ip_gaussian_asymm
 
 contains
 
@@ -169,5 +173,24 @@ contains
     J_R = Jcyl(1); J_Z = Jcyl(2); J_phi = Jcyl(3)
     dJ_R_dt = dJcyl_dt(1); dJ_Z_dt = dJcyl_dt(2); dJ_phi_dt = dJcyl_dt(3)
   end subroutine jphi_gaussian_rotated_source
+
+  subroutine Ip_gaussian_asymm(zj, mp, ms, mt, BigR, x_s, x_t ,y_s, y_t)
+
+  use gauss
+  ! Perform Gaussian integration to calculate the plasma current from the source in the specific plane
+  real*8, intent(in)  :: zj, BigR, x_s, x_t ,y_s, y_t
+  integer,intent(in)  :: mp,ms,mt
+
+  ! Local 
+  real*8 :: xjac , wgauss_copy(n_gauss) , wst
+
+  xjac = x_s*y_t - x_t*y_s
+  wgauss_copy = wgauss
+  wst  = wgauss_copy(ms)*wgauss_copy(mt)
+  
+  ! Integral accumulates per each plane
+  Ip_gaussian_p(mp) = Ip_gaussian_p(mp) - zj/BigR * xjac * wst
+
+  end subroutine Ip_gaussian_asymm
 
 end module mod_jphi_gaussian_source

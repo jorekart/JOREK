@@ -317,6 +317,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   use mod_axis_treatment
   use mod_simulation_data, only: type_MHD_SIM
   use global_distributed_matrix, only: global_matrix_structure_vacuum
+  use mod_jphi_gaussian_source, only : Ip_gaussian_p
   
   !$ use omp_lib
   implicit none
@@ -404,6 +405,11 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   
   ! --- Memory tracking
   call tr_print_memsize("DebConstM")
+  if (my_id .eq. 0) write(*,*) 'Initializing gaussian plasma current accumulation array...'
+  if (.not. allocated(Ip_gaussian_p)) then
+    allocate(Ip_gaussian_p(n_plane))
+  endif
+  Ip_gaussian_p(:) = 0.d0
 
   if (.not. harmonic_matrix) then
     
@@ -466,7 +472,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   !$omp parallel default(none) &
   !$omp   shared(n_local_elms,local_elms,element_list,node_list, aux_node_list,                                &
   !$omp          my_ind_min, my_ind_max,xpoint2,xcase2,R_axis,Z_axis,psi_axis,psi_bnd,Z_xpoint,harmonic_matrix,  &
-  !$omp          a_mat, rhs_local, rhs_vec,                                                               &
+  !$omp          a_mat, rhs_local, rhs_vec, Ip_gaussian_p,                                                               &
   !$omp          R_xpoint,my_id,bc_natural_open,bc_natural_flux,refinement,thread_struct,n_tor_fft_thresh,     &
   !$omp          difference_found,rhs_problem,elm_problem, treat_axis) &
   !$omp   private(ife,ielm,iv,inode,element, i,inode1,i_order,index_node1, n_tor_local,   &
@@ -529,7 +535,6 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
       enddo
 
     endif
-
     call elementary_matrix_build(element, nodes, xpoint2, xcase2, R_axis, Z_axis, psi_axis,        &
       psi_bnd, R_xpoint, Z_xpoint, omp_tid, ife, ielm, n_local_elms, node_list, a_mat%i_tor_min, a_mat%i_tor_max, aux_nodes)
 
@@ -744,7 +749,15 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
     call dealloc_node(aux_nodes(iv))
   enddo
   !$omp end parallel
- 
+  
+  if (my_id .eq. 0) then 
+    write(*,*) 'Writing out Ip_gaussian_p'
+    open(unit=10, file="Ip_gaussian_p.txt", status="replace")
+    do i = 1, n_plane
+      write(10,*) Ip_gaussian_p(i)
+    end do
+    close(10)
+  endif
   ! --- Memory tracking
   call tr_vnorms("cm_A_bef_bc", a_mat%val, a_mat%nnz)
   

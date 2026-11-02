@@ -1,0 +1,136 @@
+&in1
+
+ restart = .t.
+ regrid  = .f.
+ refinement=.false.
+ tstep   = 100 
+ nstep   = 200
+
+ nout = 20
+
+  time_evol_scheme= "Gears"
+  iter_precon = 100
+  gmres_4     = 1.d3
+  gmres_tol   = 1.d-7
+  gmres_m     = 100
+  max_steps_noUpdate = 40
+
+!  bcs(1)%dirichlet%zj = .false. 
+!  bcs(2)%dirichlet%zj = .false. 
+!  bcs(3)%dirichlet%zj = .false. 
+
+! Tilting current source params
+ jgs_amplitude = -10.d0      !< amplitude of the (untilted) toroidal current density Gaussian
+ jgs_R0 = 10.0             !< major radius of the Gaussian center (before tilting)
+ jgs_Z0 = 0.5d0            !< vertical position of the Gaussian center (before tilting)
+ jgs_width = 0.5          !< width of the circular (single-width) Gaussian in R and Z
+ jgs_tilt_angle = 0.03 !0.15    !< radians
+ jgs_ramp_time  = 8000
+
+ freeze_variable%var_u = .true.
+ freeze_variable%var_w = .true.
+ freeze_variable%var_T = .true.
+ freeze_variable%var_vpar = .true.
+ freeze_variable%var_rho = .true.
+ freeze_variable%zbig = 1.d12 
+
+keep_current_prof = .f.
+
+! rst_hdf5 = 1    ! = 0 ; restart from binary files
+!                 ! = 1 ; restart from HDF5 files
+
+ fbnd(1)   = 2.
+ fbnd(2:4) = 0.
+ mf        = 0
+
+ ellip  = 1.
+ tria_u = 0.
+ tria_l = 0.
+ quad_u = -0.
+ quad_l = -0.
+
+ freeboundary = .f.
+ use_strumpack = .false.
+ use_pastix = .true.
+
+ xampl  = +0.
+ xsig   = 0.6
+ xwidth = 1.5
+ xtheta = 4.7
+ xshift = 0.0
+ xpoint = .f.
+
+ R_begin = 2.9
+ R_end   = 3.1
+ Z_begin = -0.1
+ Z_end   = 0.1
+
+ R_geo = 10.0
+ Z_geo = 0.
+
+ F0    = 4.0!10.0
+
+ amin     = 1.
+
+ n_R      = 0
+ n_Z      = 0
+ n_radial = 51
+ n_pol    = 24
+
+ n_flux   = 0!41
+ n_tht    = 24
+ n_open   = 0
+ n_leg    = 0
+ n_private = 0
+
+ eta   = 1.d-2
+ eta_T_dependent = .false.
+ eta_coul_log_dep = .false.
+ visco = 1.d-5
+ visco_old_setup = .true.
+
+ eta_num = 0.d-10
+ visco_num = 0.d0
+
+ D_par  = 0.d0
+ D_perp = 1.d-6
+
+ ZK_par  = 1.d0
+ ZK_perp = 1.d-6
+
+ FF_0 = 1.173
+ FF_1 = 0.
+ FF_coef(1)  = -1.0
+ FF_coef(2)  = 0.d0
+ FF_coef(3)  = 0.d0
+ FF_coef(4)  = 0.03d0
+ FF_coef(5)  = 5.0d0
+ FF_coef(6)  = 1.d0
+ FF_coef(7)  = 10.d0
+ FF_coef(8)  = 1.d0
+
+ heatsource     = 0.d0
+ particlesource = 0.d0
+
+ T_0 = 1.d-6
+ T_1 = 1.d-8
+ T_coef(1) = -0.8d0
+ T_coef(2) = +0.0d0
+ T_coef(3) = 0.d0
+ T_coef(4) = 1.d0
+ T_coef(5) = 5.d0
+
+ rho_0 = 1.
+ rho_1 = 1.
+ rho_coef(1)  =  0.0
+ rho_coef(2)  =  0.0
+ rho_coef(3)  =  0.0
+ rho_coef(4)  =  1.d0
+ rho_coef(5)  =  5.d0
+
+ iter_precon = 22
+ gmres_m = 20
+ gmres_4 = 1.d0
+ gmres_max_iter = 200
+ gmres_tol = 1.d-8
+/
