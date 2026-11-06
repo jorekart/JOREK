@@ -1866,7 +1866,6 @@ module mod_plasma_response
     real(dp) :: vec_diff(3), vec_cross(3), norm_diff
     real(dp) :: field_tot(3), r_pol
     real(dp) :: R_hat(2)
-    integer, parameter :: turns = 4 ! Turns per coil. 4 for rmp
     character(len=256) :: filename
     logical :: file_exists
     integer :: ios
@@ -1935,8 +1934,9 @@ module mod_plasma_response
     allocate(BZ_field(n_geom))
     allocate(BR_field(n_geom))
 
-    BZ_field = turns * matmul(mat_mz, i_tot)
-    BR_field = turns * matmul(mat_mr, i_tot)
+    ! i_tot is the total current of each coil [A-turns], as given in rmp_coils_setup.txt
+    BZ_field = matmul(mat_mz, i_tot)
+    BR_field = matmul(mat_mr, i_tot)
 
   end subroutine biot_savart_matrix
 
