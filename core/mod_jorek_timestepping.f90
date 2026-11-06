@@ -24,7 +24,7 @@ type, extends(action) :: jorek_timestep_action
   integer                                       :: istep !< index in timestep size array from namelist (not jorek timestep number!)
     !< MPI settings
   integer                                       :: my_id = 0
-  integer                                       :: n_cpu = 1  
+  integer                                       :: n_mpi = 1  
 
   logical                                       :: setup_done = .false. !< have we set up the solvers etc?
 #ifdef USE_FFTW
@@ -77,7 +77,6 @@ function new_jorek_timestep_action(auxiliary_node_list) result(new)
   if (present(auxiliary_node_list)) new%auxiliary_node_list => auxiliary_node_list
   new%istep = 1
   new%name = "JOREK timestep"
-  new%log = .true.
 end function new_jorek_timestep_action
 
 
@@ -112,7 +111,7 @@ subroutine setup_solvers(this, sim)
   integer :: inode, ierr, i, block_size, n_masters
 
   write(*,*) 'setting up the solvers'
-  call tr_meminit(sim%my_id, sim%n_cpu)
+  call tr_meminit(sim%my_id, sim%n_mpi)
   call tr_resetfile()
 
   ! Initialize clock
@@ -134,6 +133,9 @@ subroutine setup_solvers(this, sim)
     endif
   endif
 
+  ! --- flag that this is a particle simulation
+  use_particles = .true.
+  
   ! --- Initialize the vacuum part.
   call vacuum_init(sim%my_id, freeboundary_equil, freeboundary, resistive_wall)
 
@@ -144,7 +146,7 @@ subroutine setup_solvers(this, sim)
   call log_parameters(sim%my_id)
 
   ! Warn on doing stupid stuff
-  call sanity_checks(sim%my_id, sim%n_cpu, 7, 7) ! #### the 7, 7 is just a dummy that needs to be removed later on; the sanity_checks should anyway not be part of setup_solvers in the end (to be addressed in a separate pull request) @TODO
+  call sanity_checks(sim%my_id, sim%n_mpi, 7, 7) ! #### the 7, 7 is just a dummy that needs to be removed later on; the sanity_checks should anyway not be part of setup_solvers in the end (to be addressed in a separate pull request) @TODO
 
   ! Initialise the boundary element and node list
   if (sim%my_id .eq. 0) then
@@ -164,7 +166,7 @@ subroutine setup_solvers(this, sim)
     
     call set_coil_curr_time_trace()
 
-    call read_Z_axis_profile()
+    call read_axis_profile(sim%my_id)
     
     call MPI_BCAST(wall_curr_initialized, 1 , MPI_LOGICAL,          0, MPI_COMM_WORLD, ierr)
 
@@ -183,10 +185,13 @@ subroutine setup_solvers(this, sim)
   endif
 
   ! nodes, elements, bnd_nodes and phys have already been broadcast
-  if ( freeboundary ) call broadcast_vacuum(sim%my_id, resistive_wall)
 
   call update_equil_state(sim%my_id, sim%fields%node_list, sim%fields%element_list, bnd_elm_list, xpoint, xcase)
   this%es = ES
+
+  if ( freeboundary ) then
+     call broadcast_vacuum(sim%my_id, resistive_wall)
+  end if
 
   if ( sim%my_id == 0 ) then
     call print_equil_state(.true.)
@@ -199,9 +204,9 @@ subroutine setup_solvers(this, sim)
 #endif
 
   !***********************************************************************
-  !*              distribute nodes and elements over cpu's               *
+  !*              distribute nodes and elements over mpi's               *
   !***********************************************************************
-  index_size  = sim%n_cpu
+  index_size  = sim%n_mpi
   id_elements = sim%my_id
 
   call tr_allocatep(this%local_elms,1,sim%fields%element_list%n_elements,"local_elms",CAT_FEM)
@@ -210,7 +215,7 @@ subroutine setup_solvers(this, sim)
   this%a_mat%comm = MPI_COMM_WORLD
   
   this%mhd_sim%my_id         = sim%my_id
-  this%mhd_sim%n_cpu         = sim%n_cpu
+  this%mhd_sim%n_mpi         = sim%n_mpi
   this%mhd_sim%freeboundary  = freeboundary
   this%mhd_sim%restart       = restart
 
@@ -223,7 +228,7 @@ subroutine setup_solvers(this, sim)
     
   this%mhd_sim%sr_n_tor      = sr%n_tor  
   
-  call distribute_nodes_elements(id_elements, this%mhd_sim%n_cpu, index_size, this%mhd_sim%node_list, this%mhd_sim%element_list, .false., this%mhd_sim%local_elms, & 
+  call distribute_nodes_elements(id_elements, this%mhd_sim%n_mpi, index_size, this%mhd_sim%node_list, this%mhd_sim%element_list, .false., this%mhd_sim%local_elms, & 
                                    this%mhd_sim%n_local_elms, this%mhd_sim%restart, this%mhd_sim%freeboundary, this%a_mat)
 
   call update_deltas(this%mhd_sim%node_list,this%deltas)
@@ -320,7 +325,7 @@ subroutine do_jorek_timestep(this, sim, ev)
   if (.not. this%setup_done) then
     t_now = sim%time / sim%t_norm  
     index_now = index_start
-    if (sim%my_id .eq. 0) write(*,"(A,f16.8,A,g12.6,A)") "INFO: JOREK timestep: ", dt_jorek, " = ", dt, " s"
+    if (sim%my_id .eq. 0) write(*,"(A,f16.8,A,g13.6,A)") "INFO: JOREK timestep: ", dt_jorek, " = ", dt, " s"
     call setup_solvers(this, sim)
   end if
 

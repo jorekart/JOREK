@@ -47,6 +47,8 @@ module mod_impurity
             adas_suffix = '89_ar'
           case('Ne')
             adas_suffix = '96_ne'
+          case('O')
+            adas_suffix = '96_o'
           case('W')
             adas_suffix = '50_w'
           case('Be')
@@ -171,7 +173,7 @@ module mod_impurity
     ! --- Some post-processing to convert units, check NaNs, etc, before output
     !---------------------------------------------------------------------------  
     ! Normalization coefficient for radiation rate from SI units (W.m^3) to JOREK units:
-    coef_rad_imp = (GAMMA-1.d0)*MU_ZERO**1.5d0*(central_mass*MASS_PROTON)**0.5d0 &
+    coef_rad_imp = (GAMMA-1.d0)*MU_ZERO**1.5d0*(central_mass*ATOMIC_MASS_UNIT)**0.5d0 &
                        *(central_density*1.d20)**2.5d0
 
     if (opt_ju) then !Convert to JOREK units

@@ -21,19 +21,24 @@ program jorek2_IDS
   
   implicit none
   
-  character(len=200):: user, database, passive_coil_geo_file, active_coil_geo_file, URI
+  character(len=1024):: user, database, passive_coil_geo_file, active_coil_geo_file, URI
   character(len=64) :: file_name, name_proj, dd_version_maj, backend, str_shot, str_run
   integer :: shot_number, run_number, i_begin, i_end, i_step, i_jump_steps, i_fmt
-  integer :: ierr, idx, stat_mhd, stat_core, stat_rad, stat_eq, n_grid, stat, stat_wall
-  integer :: stat_pass, stat_act, stat_sum, stat_dis, stat_vac, stat_spi
+  integer :: ierr, idx, stat_mhd, stat_core, stat_rad, stat_eq, n_grid, stat, stat_wall, n_phi_PFC_wall=32
+  integer :: stat_pass, stat_act, stat_sum, stat_dis, stat_vac, stat_spi, stat_trans
+  integer :: summary_disruption_type, summary_disruption_vertical_displacement
   logical :: first_step, file_exists, rad_only_projections_h5, overwrite_entry
   logical :: export_JOREK_variables, export_radiation, export_1d_profiles, export_equilibrium
   logical :: export_wall, export_pf_passive, export_pf_active, export_summary, export_disruption
-  logical :: export_field_extension, new_entry, export_spi
+  logical :: export_field_extension, new_entry, export_spi, export_transport
   real*8  :: rho0, fact_time, time_SI, wall_thickness
+  real*8, allocatable :: res0D(:), res_bnd(:,:,:)
+  real*8, allocatable :: avg(:,:)    ! average like expr_avg_list + q_prof + rho_tor
+  real*8, allocatable :: q_prof(:), rho_tor(:)
+
 
   integer   :: my_id, my_id_n, my_id_master, ierr2
-  integer   :: i_rank(n_tor), n_cpu, n_cpu_n, n_cpu_master, m_cpu, n_masters, n_cpu_trans, my_id_trans
+  integer   :: i_rank(n_tor), n_mpi, n_mpi_n, n_mpi_master, m_mpi, n_masters, n_mpi_trans, my_id_trans
   integer   :: MPI_COMM_N, MPI_GROUP_MASTER, MPI_GROUP_WORLD, MPI_COMM_MASTER, MPI_COMM_TRANS
   integer   :: required,provided,StatInfo, resultlength
   integer*4 :: rank, comm_size 
@@ -50,16 +55,20 @@ program jorek2_IDS
   type(ids_pf_active)     :: pf_active
   type(ids_disruption)    :: disruption_ids
   type(ids_spi)           :: spi_ids
+  type(ids_plasma_transport), target :: transport_ids
   type(t_rect_grid_params):: rect_grid_params
+  type(t_PFC_triang_grid) :: PFC_wall_grid
+  type(t_expr_list) :: expr_avg_list
 
-  namelist /imas_params/ shot_number, run_number, user, database, i_begin, i_end,    &
+  namelist /imas_params/ URI, shot_number, run_number, user, database, i_begin, i_end, &
                          export_JOREK_variables, export_radiation, export_1d_profiles, n_grid, &
                          export_equilibrium, rad_only_projections_h5, export_wall,   &
                          export_pf_passive, export_pf_active, passive_coil_geo_file, &
                          active_coil_geo_file, wall_thickness, export_disruption,    &
                          export_summary, overwrite_entry, i_jump_steps,              &
                          simulation_description, export_field_extension,             &
-                         rect_grid_params, backend, export_spi 
+                         rect_grid_params, backend, export_spi, export_transport,    &
+                         summary_disruption_type, summary_disruption_vertical_displacement
 
   ! --- Necessary initialization ------------------
   ! --- MPI initialization (for wall current reconstruction)
@@ -75,12 +84,12 @@ program jorek2_IDS
 
   ! --- Determine number of MPI procs
   call MPI_COMM_SIZE(MPI_COMM_WORLD, comm_size, ierr)
-  n_cpu = comm_size
+  n_mpi = comm_size
   
-  if (n_cpu > 1) then
+  if (n_mpi > 1) then
     write(*,*) '  jorek2_IDS needs to be adapated for several MPI processes'
     write(*,*) '  please run with 1 MPI process for the moment'
-    write(*,*) n_cpu
+    write(*,*) n_mpi
     stop
   endif
 
@@ -102,7 +111,7 @@ program jorek2_IDS
   call preset_parameters()
 
   ! --- Initialize and broadcast input parameters
-  call initialise_and_broadcast_parameters(my_id, "__NO_FILENAME__")
+  call initialise_and_broadcast_parameters(my_id, "__NO_FILENAME__", .false.)
 
   ! --- Ensure that aux_node_list is associated
   if (.not. associated(aux_node_list)) allocate(aux_node_list)
@@ -124,6 +133,7 @@ program jorek2_IDS
   ! ------------------ end initialization ------------------------
   
   ! --- Preset parameters for this program
+  URI         = ''                        !< Optional complete IMAS URI; overrides the fields below
   backend     = 'hdf5'                    !< Name of the backend to store the data (mdsplus,hdf5...)
   database    = 'test'                    !< Name of the database to export the results
   shot_number = 111112;   run_number=1;   
@@ -141,6 +151,9 @@ program jorek2_IDS
   export_summary       = .false.
   export_disruption    = .false.
   export_spi           = .false.
+  export_transport     = .false.      
+  summary_disruption_type = -999       !< Optional summary/disruption/type/index
+  summary_disruption_vertical_displacement = -999  !< Optional summary/disruption/vertical_displacement/value
   rad_only_projections_h5 = .false.    !< use only *.h5 projection files for radiation IDS (single jorek_restart.h5 still needed)
   overwrite_entry      = .false.       !< If true, it overwrites the shot/run even if it already exists in the database.
                                        !  Otherwise it appends the IDSs to the existing entry
@@ -160,13 +173,15 @@ program jorek2_IDS
     close(42)
   end if
 
-  ! --- Compute URI (IMAS data path/identifier)
-  write(str_run,  '(I0)') run_number
-  write(str_shot, '(I0)') shot_number
-  write(dd_version_maj, '(I0)') al_dd_major_version
+  ! --- Use a URI supplied in the namelist in preference to its component fields.
+  if (len_trim(URI) == 0) then
+    write(str_run,  '(I0)') run_number
+    write(str_shot, '(I0)') shot_number
+    write(dd_version_maj, '(I0)') al_dd_major_version
 
-  URI = "imas:" // trim(backend) // "?user="     // trim(user)     // ";pulse="    // TRIM(str_shot)      // &
-        ";run=" // TRIM(str_run) // ";database=" // trim(database) // ";version=" //  TRIM(dd_version_maj)
+    URI = "imas:" // trim(backend) // "?user="     // trim(user)     // ";pulse="    // TRIM(str_shot)      // &
+          ";run=" // TRIM(str_run) // ";database=" // trim(database) // ";version=" //  TRIM(dd_version_maj)
+  endif
 
   write(*,*) ' Exporting to URI = '//trim(URI)
   new_entry = .true.
@@ -184,21 +199,18 @@ program jorek2_IDS
     endif
   endif
 
-  if (export_radiation)  then
-    if (.not. use_marker) then
-      write(*,*) 'radiation IDS currently only supported with marker model'
-      export_radiation=.false.
-    else
-      allocate( aux_node_list )
-    end if
+  if (export_radiation .and. use_marker)  then
+    allocate( aux_node_list )
   end if
 
   ! --- Time normalization
-  rho0       = central_density * 1.d20 * central_mass * mass_proton
+  rho0       = central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT
   fact_time  = sqrt( mu_zero * rho0 )
 
   first_step = .true.
 
+  call initialise_postproc_settings(first_step, n_grid)
+  
   ! --- Loop over
   do i_step = i_begin, i_end, i_jump_steps
  
@@ -248,17 +260,35 @@ program jorek2_IDS
       if ( .not. wall_curr_initialized ) call init_wall_currents(my_id, resistive_wall)
    endif
 
+    ! --- Compute integrals 
+    if (export_equilibrium .or. export_summary .or. export_disruption)  then
+      call get_0D_data(first_step, res0D)
+    endif
+
+    ! --- Compute flux average profiles
+    if (export_equilibrium .or. export_1d_profiles .or. export_radiation)  then
+      call get_average_data(first_step, n_grid, expr_avg_list, avg)
+    end if
+
+    ! --- Get boundary data and create grid for the JOREK boundary
+    if (export_wall .or. export_transport) then
+      call get_boundary_data(n_phi=n_phi_PFC_wall, result=res_bnd)
+      if (first_step) call triangulate_thin_wall_from_bnd(bnd_points=res_bnd, PFC_wall=PFC_wall_grid)
+    end if
+
     ! --- Fill and export a plasma profiles IDS with the JOREK variables
     if (export_JOREK_variables)  call fill_profiles_w_JOREK_var(first_step, time_SI, plasma_profiles_ids1)  
 
     ! --- Fill and export a plasma_profiles IDS
-    if (export_1d_profiles)  call fill_plasma_profiles_IDS(first_step, time_SI, plasma_profiles_ids, n_grid)  
+    if (export_1d_profiles)  call fill_plasma_profiles_IDS(first_step, time_SI, expr_avg_list, avg, plasma_profiles_ids, n_grid)  
 
-    ! --- Fill IDSs that share common quantities
-    if (export_equilibrium .or. export_summary .or. export_disruption)  then
-      call fill_IDSs_w_common_quantities(first_step, time_SI, n_grid, export_equilibrium, export_summary, export_disruption, &
-                                        equilibrium_ids, summary_ids, disruption_ids, simulation_description, rect_grid_params)
-    endif
+
+    if (export_equilibrium) call fill_equilibrium_IDS(first_step, time_SI, n_grid, res0D, expr_avg_list, avg, equilibrium_ids, rect_grid_params)  
+    if (export_summary)     call fill_summary_IDS(first_step, time_SI, res0D, summary_ids, simulation_description, &
+                                                   summary_disruption_type, summary_disruption_vertical_displacement)
+    if (export_disruption)  call fill_disruption_IDS(first_step, time_SI, res0D, disruption_ids) 
+    if (export_transport)   call fill_transport_IDS(first_step, time_SI, transport_ids, res_bnd, PFC_wall_grid)
+
 
     ! --- Extend the fields to vacuum is possible
     if (export_field_extension) then
@@ -275,7 +305,7 @@ program jorek2_IDS
     endif
 
     ! --- Fill and export a wall IDS
-    if (export_wall)  call fill_wall_IDS(first_step, time_SI, wall_thickness, wall_ids)  
+    if (export_wall)  call fill_wall_IDS(first_step, time_SI, wall_thickness, wall_ids, res_bnd, PFC_wall_grid)  
 
     ! --- Fill and export a pf_passive IDS
     if (export_pf_passive)  call fill_pf_passive_IDS(first_step, time_SI, pf_passive, passive_coil_geo_file)  
@@ -285,20 +315,21 @@ program jorek2_IDS
 
     ! --- Fill and export a radiation IDS
     if (export_radiation) then
-      call import_hdf5_restart_aux(aux_node_list, trim(name_proj) // '.h5', rst_format, ierr)
-      if (ierr /= 0) then
-        write(*,*) ' Could not open projections file where radiation is stored'
-        stop
+      if (use_marker) then
+        call import_hdf5_restart_aux(aux_node_list, trim(name_proj) // '.h5', rst_format, ierr)
+        if (ierr /= 0) then
+          write(*,*) ' Could not open projections file where radiation is stored'
+          stop
+        endif
       endif
-      call fill_radiation_IDS(first_step, time_SI, radiation_ids)  
-    endif
-
+      call fill_radiation_IDS(first_step, time_SI, expr_avg_list, avg, n_grid, radiation_ids)  
+    end if
     ! --- Fill and export an SPI IDS
     if (export_spi)   call fill_spi_IDS(first_step, time_SI, spi_ids) 
 
     stat_mhd = 1;   stat_core = 1;   stat_rad = 1;   stat_eq  = 1;   stat_wall = 1;
     stat_pass= 1;   stat_act  = 1;   stat_sum = 1;   stat_dis = 1;   stat_vac  = 1;
-    stat_spi = 1;
+    stat_spi = 1;   stat_trans= 1;
 
     ! --- Put IDSs into database
     if (first_step .and. new_entry) then  
@@ -313,6 +344,7 @@ program jorek2_IDS
       if (export_summary)          call ids_put(idx,'summary',summary_ids,stat_sum)
       if (export_disruption)       call ids_put(idx,'disruption',disruption_ids,stat_dis)
       if (export_spi)              call ids_put(idx,'spi',spi_ids,stat_spi)
+      if (export_transport)        call ids_put(idx,'plasma_transport',transport_ids,stat_trans)
     else
       if (export_1d_profiles)      call ids_put_slice(idx,'plasma_profiles',plasma_profiles_ids,stat_core)
       if (export_JOREK_variables)  call ids_put_slice(idx,'plasma_profiles/1',plasma_profiles_ids1,stat_mhd)
@@ -325,6 +357,7 @@ program jorek2_IDS
       if (export_summary)          call ids_put_slice(idx,'summary',summary_ids,stat_sum)
       if (export_disruption)       call ids_put_slice(idx,'disruption',disruption_ids,stat_dis)
       if (export_spi)              call ids_put_slice(idx,'spi',spi_ids,stat_spi)
+      if (export_transport)        call ids_put_slice(idx,'plasma_transport',transport_ids,stat_trans)
     endif
 
     if (export_JOREK_variables.and. (stat_mhd==0 ))  write(*,*) '    JOREK variables exported to plasma profiles IDS'
@@ -338,6 +371,7 @@ program jorek2_IDS
     if (export_summary       .and. (stat_sum==0 ))   write(*,*) '    Summary IDS exported'
     if (export_disruption    .and. (stat_dis==0 ))   write(*,*) '    Disruption IDS exported'
     if (export_SPI           .and. (stat_spi==0 ))   write(*,*) '    SPI IDS exported'
+    if (export_transport     .and. (stat_trans==0 )) write(*,*) '    Plasma transport IDS exported'
 
     if (export_JOREK_variables.and. (stat_mhd/=0 ))  write(*,*) '    Problem saving JOREK variables to plasma profiles IDS'
     if (export_field_extension.and.(stat_vac/=0 ))   write(*,*) '    Problem saving vacuum extension'
@@ -350,6 +384,7 @@ program jorek2_IDS
     if (export_summary       .and. (stat_sum/=0 ))   write(*,*) '    Problem saving summary IDS'
     if (export_disruption    .and. (stat_dis/=0 ))   write(*,*) '    Problem saving disruption IDS'
     if (export_spi           .and. (stat_spi/=0 ))   write(*,*) '    Problem saving SPI IDS'
+    if (export_transport     .and. (stat_trans/=0 )) write(*,*) '    Problem saving Plasma transport IDS'
 
     first_step = .false.
 
